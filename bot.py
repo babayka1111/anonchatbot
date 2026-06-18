@@ -222,7 +222,7 @@ def admin_ban_keyboard(user_id: int):
         [InlineKeyboardButton("✅ Отклонить", callback_data=f"ban_{user_id}_no")],
     ])
 
-async def notify_moderator(context: ContextTypes.DEFAULT_TYPE, user_id: int, partner_id: int, text: str, is_media: bool = False):
+async def notify_moderator(context: ContextTypes.DEFAULT_TYPE, user_id: int, partner_id: int, text: str):
     if not moder_monitoring:
         return
     try:
@@ -240,7 +240,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🚫 Вы заблокированы ({reason}).")
         return ConversationHandler.END
 
-    # Реферальная логика
     if args:
         ref_code = args[0]
         conn = sqlite3.connect("bot.db")
@@ -292,15 +291,20 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender = "male" if query.data == "gender_male" else "female"
     set_gender(user_id, gender)
     kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
-    await query.edit_message_text(
-        "✅ Пол сохранён!\n\n"
+    await query.edit_message_text("✅ Пол сохранён!")
+    await query.message.reply_text(
         "👋 Привет! Это анонимный чат.\n"
         "Общайся вежливо, соблюдай правила поведения.\n\n"
         "Нажми кнопку ниже, чтобы начать поиск случайного собеседника.\n\n"
+        "/start — перезапуск бота\n"
+        "/search — поиск собеседника\n"
+        "/next — переключить собеседника\n"
+        "/stop — завершить диалог\n"
         "/ref — реферальная система\n"
-        "/prem — статус подписки",
+        "/prem — статус подписки\n\n"
+        "После каждого диалога вы можете пожаловаться на собеседника",
+        reply_markup=kb
     )
-    await query.message.reply_text("Выбери действие:", reply_markup=kb)
     return ConversationHandler.END
 
 async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -355,7 +359,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
 
-    # Поиск по кнопкам
     if text in ["🔀 Случайный", "🙎‍♀️ Девушку", "🙎‍♂️ Парня"]:
         if user_id in active_chats:
             await update.message.reply_text("🤖 Вы уже в диалоге.\n/stop — остановить диалог", reply_markup=chat_keyboard())
@@ -364,12 +367,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
 
-        if user_id in waiting_queue:
-            waiting_queue.remove(user_id)
-        if user_id in waiting_male:
-            waiting_male.remove(user_id)
-        if user_id in waiting_female:
-            waiting_female.remove(user_id)
+        if user_id in waiting_queue: waiting_queue.remove(user_id)
+        if user_id in waiting_male: waiting_male.remove(user_id)
+        if user_id in waiting_female: waiting_female.remove(user_id)
 
         searching_users.add(user_id)
         target_gender = None
@@ -392,12 +392,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 partner_id = all_waiting.pop(0)
 
         if partner_id:
-            if partner_id in waiting_male:
-                waiting_male.remove(partner_id)
-            if partner_id in waiting_female:
-                waiting_female.remove(partner_id)
-            if partner_id in waiting_queue:
-                waiting_queue.remove(partner_id)
+            if partner_id in waiting_male: waiting_male.remove(partner_id)
+            if partner_id in waiting_female: waiting_female.remove(partner_id)
+            if partner_id in waiting_queue: waiting_queue.remove(partner_id)
 
             searching_users.discard(partner_id)
             searching_users.discard(user_id)
@@ -482,7 +479,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     partner_id = active_chats[user_id]
 
-    # Засчитываем реферала
     count_referral(user_id)
 
     if user_id not in chat_history:
