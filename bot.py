@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 import uuid
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import random
@@ -12,6 +13,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 7421345767
 PORT = int(os.environ.get("PORT", 10000))
 CHOOSING_GENDER = 0
+GENDERS_FILE = "genders.json"
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -31,13 +33,32 @@ active_chats = {}
 chat_history = {}
 pending_reports = {}
 
+def load_genders():
+    try:
+        with open(GENDERS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_genders(data):
+    with open(GENDERS_FILE, "w") as f:
+        json.dump(data, f)
+
+def get_gender(user_id: int):
+    data = load_genders()
+    return data.get(str(user_id))
+
+def set_gender(user_id: int, gender: str):
+    data = load_genders()
+    data[str(user_id)] = gender
+    save_genders(data)
+
 def init_db():
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS bans (user_id INTEGER PRIMARY KEY, reason TEXT, banned_until TEXT, banned_at TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS referrals (user_id INTEGER, referral_id INTEGER, registered_at TEXT, counted INTEGER DEFAULT 0)""")
     c.execute("""CREATE TABLE IF NOT EXISTS premium (user_id INTEGER PRIMARY KEY, premium_until TEXT, activated_at TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS genders (user_id INTEGER PRIMARY KEY, gender TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS ref_codes (user_id INTEGER PRIMARY KEY, code TEXT)""")
     conn.commit()
     conn.close()
@@ -73,21 +94,6 @@ def is_banned(user_id: int) -> tuple:
         unban_user(user_id)
         return False, None
     return True, f"до {banned_until}"
-
-def get_gender(user_id: int):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("SELECT gender FROM genders WHERE user_id = ?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-def set_gender(user_id: int, gender: str):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO genders VALUES (?, ?)", (user_id, gender))
-    conn.commit()
-    conn.close()
 
 def get_ref_code(user_id: int):
     conn = sqlite3.connect("bot.db")
@@ -377,11 +383,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender = get_gender(user_id)
     if gender is None:
         await update.message.reply_text(
-            "⚠️ Сначала выбери свой пол:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🙎‍♂️ Я парень", callback_data="gender_male"),
-                 InlineKeyboardButton("🙎‍♀️ Я девушка", callback_data="gender_female")]
-            ])
+            "⚠️ Сначала выбери свой пол с помощью /start"
         )
         return
 
