@@ -461,28 +461,10 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🤖 Вы ни с кем не общаетесь\n/search — начать поиск собеседника", reply_markup=main_keyboard())
 
-    app = def main():
-    # Запускаем веб-сервер для UptimeRobot в отдельном потоке
+def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("search", search))
-    app.add_handler(CommandHandler("next", next_chat))
-    app.add_handler(CommandHandler("stop", stop_chat))
-    app.add_handler(CommandHandler("unban", unban_cmd))
-    app.add_handler(CommandHandler("banlist", banlist_cmd))
-    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(report|ban_).*"))
-    app.add_handler(MessageHandler(
-        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
-        filters.Sticker.ALL | filters.Document.ALL | filters.VIDEO_NOTE |
-        filters.ANIMATION,
-        handle_message
-    ))
-
-    print("Бот запущен...")
-    app.run_polling()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("search", search))
