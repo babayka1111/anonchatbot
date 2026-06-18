@@ -131,8 +131,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        "👋 Привет! Это анонимный чат.\n\n"
-        "Нажми кнопку ниже, чтобы начать поиск случайного собеседника.",
+        "👋 Привет! Это анонимный чат.\n"
+        "Общайся вежливо, соблюдай правила поведения.\n\n"
+        "Нажми кнопку ниже, чтобы начать поиск случайного собеседника.\n\n"
+        "/start — перезапуск бота\n"
+        "/search — поиск собеседника\n"
+        "/next — переключить собеседника\n"
+        "/stop — завершить диалог\n\n"
+        "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=main_keyboard()
     )
 
@@ -351,6 +357,68 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             waiting_queue.remove(target_id)
         searching_users.discard(target_id)
 
+async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /ban [user_id] [срок]\n"
+            "Примеры:\n"
+            "/ban 123456789 1d — бан на 1 день\n"
+            "/ban 123456789 7d — бан на 7 дней\n"
+            "/ban 123456789 30d — бан на 30 дней\n"
+            "/ban 123456789 1y — бан на год\n"
+            "/ban 123456789 forever — вечный бан"
+        )
+        return
+    
+    try:
+        target = int(context.args[0])
+    except:
+        await update.message.reply_text("Неверный ID. Использование: /ban [user_id] [срок]")
+        return
+    
+    duration = context.args[1].lower()
+    
+    if duration == "forever" or duration == "0":
+        days = None
+        reason_text = "навсегда"
+    elif duration.endswith("d"):
+        try:
+            days = int(duration[:-1])
+            reason_text = f"на {days} дн."
+        except:
+            await update.message.reply_text("Неверный формат. Пример: 7d, 30d, 1y, forever")
+            return
+    elif duration.endswith("y"):
+        try:
+            days = int(duration[:-1]) * 365
+            reason_text = f"на {int(duration[:-1])} год/лет"
+        except:
+            await update.message.reply_text("Неверный формат. Пример: 7d, 30d, 1y, forever")
+            return
+    else:
+        await update.message.reply_text("Неверный формат. Пример: 7d, 30d, 1y, forever")
+        return
+    
+    ban_user(target, "Бан от администратора", days)
+    
+    await update.message.reply_text(f"⛔ Пользователь <code>{target}</code> забанен ({reason_text}).", parse_mode="HTML")
+    
+    try:
+        await context.bot.send_message(target, f"🚫 Вы заблокированы ({reason_text}) администратором.")
+    except:
+        pass
+    
+    partner_id = active_chats.pop(target, None)
+    if partner_id:
+        active_chats.pop(partner_id, None)
+        await context.bot.send_message(partner_id, "🤖 Собеседник отключён.")
+    if target in waiting_queue:
+        waiting_queue.remove(target)
+    searching_users.discard(target)
+
 async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -479,6 +547,7 @@ def main():
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop_chat))
+    app.add_handler(CommandHandler("ban", ban_cmd))
     app.add_handler(CommandHandler("unban", unban_cmd))
     app.add_handler(CommandHandler("banlist", banlist_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(report|ban_).*"))
