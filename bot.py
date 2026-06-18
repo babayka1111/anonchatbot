@@ -195,6 +195,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🤖 Диалог остановлен",
                 reply_markup=report_keyboard()
             )
+            await update.message.reply_text(
+                "/search — начать поиск собеседника",
+                reply_markup=main_keyboard()
+            )
         else:
             if user_id in searching_users:
                 searching_users.discard(user_id)
@@ -457,6 +461,7 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_history.pop(partner_id, None)
         await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         await update.message.reply_text("🤖 Диалог остановлен", reply_markup=report_keyboard())
+        await update.message.reply_text("/search — начать поиск собеседника", reply_markup=main_keyboard())
     elif user_id in searching_users:
         searching_users.discard(user_id)
         if user_id in waiting_queue:
