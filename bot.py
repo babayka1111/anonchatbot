@@ -308,8 +308,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ref — реферальная система\n"
         "/prem — статус подписки\n"
         "/settings — изменить параметры\n\n"
-        "После каждого диалога вы можете пожаловаться на собеседника\n\n"
-        "⚠️ Напишите /start для обновления клавиатуры",
+        "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
     )
     return ConversationHandler.END
@@ -338,8 +337,7 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ref — реферальная система\n"
         "/prem — статус подписки\n"
         "/settings — изменить параметры\n\n"
-        "После каждого диалога вы можете пожаловаться на собеседника\n\n"
-        "⚠️ Напишите /start для обновления клавиатуры",
+        "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
     )
     return ConversationHandler.END
@@ -392,7 +390,7 @@ async def giveprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     give_premium(target, days)
     await update.message.reply_text(f"✅ Premium выдан пользователю <code>{target}</code> на {days} дн.", parse_mode="HTML")
     try:
-        await context.bot.send_message(target, f"🎉 Администратор выдал вам Premium на {days} дн.\n\n⚠️ Напишите /start для обновления клавиатуры")
+        await context.bot.send_message(target, f"🎉 Администратор выдал вам Premium на {days} дн.\nНапишите /start для обновления клавиатуры")
     except:
         pass
 
@@ -570,8 +568,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/ref — реферальная система\n"
             "/prem — статус подписки\n"
             "/settings — изменить параметры\n\n"
-            "После каждого диалога вы можете пожаловаться на собеседника\n\n"
-            "⚠️ Напишите /start для обновления клавиатуры",
+            "После каждого диалога вы можете пожаловаться на собеседника",
             reply_markup=kb
         )
         return
