@@ -12,6 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 7421345767
 PORT = int(os.environ.get("PORT", 10000))
 CHOOSING_GENDER = 0
+REFERRALS_NEEDED = 5
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -121,7 +122,7 @@ def add_referral(user_id: int, referral_id: int):
     conn.commit()
     conn.close()
 
-def count_referral(referral_id: int):
+def count_referral(referral_id: int, context=None):
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
     c.execute("UPDATE referrals SET counted = 1 WHERE referral_id = ? AND counted = 0", (referral_id,))
@@ -131,10 +132,20 @@ def count_referral(referral_id: int):
     conn.close()
     if row:
         check_premium(row[0])
+        # Уведомляем пригласившего
+        if context:
+            try:
+                context.bot.send_message(
+                    row[0],
+                    f"🎉 Ваш реферал <code>{referral_id}</code> начал общаться! ({get_referral_count(row[0])}/{REFERRALS_NEEDED})",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
 
 def check_premium(user_id: int):
     count = get_referral_count(user_id)
-    if count >= 10:
+    if count >= REFERRALS_NEEDED:
         conn = sqlite3.connect("bot.db")
         c = conn.cursor()
         c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
@@ -336,11 +347,11 @@ async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prem_info = get_premium_info(user_id)
     text = (
         "🔗 <b>Реферальная система</b>\n\n"
-        "✅ Пригласи 10 друзей, которые <b>реально пообщаются</b> в боте "
+        f"✅ Пригласи {REFERRALS_NEEDED} друзей, которые <b>реально пообщаются</b> в боте "
         "(найдут собеседника и отправят хотя бы одно сообщение), "
         "и ты получишь доступ к <b>поиску по полу на 7 дней</b>!\n\n"
         f"🔗 Твоя ссылка:\n<code>{link}</code>\n"
-        f"📊 Приглашено: {count}/10\n"
+        f"📊 Приглашено: {count}/{REFERRALS_NEEDED}\n"
     )
     if has_prem:
         remaining, passed = prem_info
@@ -356,8 +367,7 @@ async def prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prem_info = get_premium_info(user_id)
     if not prem_info:
         await update.message.reply_text(
-            "❌ У вас нет активной подписки.\n"
-            "Пригласите 10 друзей через /ref чтобы получить доступ к поиску по полу."
+            f"❌ У вас нет активной подписки.\nПригласите {REFERRALS_NEEDED} друзей через /ref чтобы получить доступ к поиску по полу."
         )
         return
     remaining, passed = prem_info
@@ -443,12 +453,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_chats[partner_id] = user_id
             chat_history[user_id] = []
             chat_history[partner_id] = []
-            text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+            partner_gender = get_gender(partner_id)
+            if target_gender:
+                found_text = "девушка" if target_gender == "female" else "парень"
+                text_msg = f"🔎🤖 Найдена {found_text}!\n\nПриятного общения!\n/stop — остановить диалог"
+            else:
+                text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
             await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
             await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
         else:
             waiting_users[user_id] = {"gender": gender, "target": target_gender}
-            await update.message.reply_text("🔍 Поиск собеседника...\n🤖 /stop — остановить поиск")
+            if target_gender:
+                search_text = "девушку" if target_gender == "female" else "парня"
+                await update.message.reply_text(f"🔍 Ищем {search_text}...\n🤖 /stop — остановить поиск")
+            else:
+                await update.message.reply_text("🔍 Поиск собеседника...\n🤖 /stop — остановить поиск")
         return
 
     if text == "⏹ Стоп":
@@ -509,7 +528,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     partner_id = active_chats[user_id]
-    count_referral(user_id)
+    count_referral(user_id, context)
 
     if user_id not in chat_history:
         chat_history[user_id] = []
