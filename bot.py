@@ -416,14 +416,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🚫 Вы заблокированы ({reason}).")
         return
 
-    gender = get_gender(user_id)
-    if gender is None:
-        await update.message.reply_text("⚠️ Сначала выбери свой пол с помощью /start")
-        return
-
     text = update.message.text
 
     if text in ["🔀 Случайный", "🙎‍♀️", "🙎‍♂️"]:
+        gender = get_gender(user_id)
+        if gender is None:
+            await update.message.reply_text(
+                "⚠️ Сначала выбери свой пол:",
+                reply_markup=gender_keyboard()
+            )
+            return
+
         if user_id in active_chats:
             await update.message.reply_text("🤖 Вы уже в диалоге.\n/stop — остановить диалог", reply_markup=chat_keyboard())
             return
@@ -488,6 +491,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "⏭ Следующий":
+        gender = get_gender(user_id)
+        if gender is None:
+            await update.message.reply_text(
+                "⚠️ Сначала выбери свой пол:",
+                reply_markup=gender_keyboard()
+            )
+            return
+
         if user_id in waiting_users and user_id not in active_chats:
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
@@ -513,7 +524,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
             await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
         else:
-            waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+            waiting_users[user_id] = {"gender": gender, "target": None}
             await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
         return
 
@@ -694,6 +705,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in waiting_users:
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
         return
+    gender = get_gender(user_id)
+    if gender is None:
+        await update.message.reply_text(
+            "⚠️ Сначала выбери свой пол:",
+            reply_markup=gender_keyboard()
+        )
+        return
     partner_id = find_partner(user_id, None)
     if partner_id:
         active_chats[user_id] = partner_id
@@ -704,7 +722,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
         await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
     else:
-        waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+        waiting_users[user_id] = {"gender": gender, "target": None}
         await update.message.reply_text("🔍 Ждём собеседника...\n🤖 /stop — остановить поиск")
 
 async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -715,6 +733,13 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if user_id in waiting_users and user_id not in active_chats:
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
+        return
+    gender = get_gender(user_id)
+    if gender is None:
+        await update.message.reply_text(
+            "⚠️ Сначала выбери свой пол:",
+            reply_markup=gender_keyboard()
+        )
         return
     partner_id = active_chats.pop(user_id, None)
     if partner_id:
@@ -738,7 +763,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
         await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
     else:
-        waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+        waiting_users[user_id] = {"gender": gender, "target": None}
         await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
 
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
