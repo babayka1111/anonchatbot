@@ -308,7 +308,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ref — реферальная система\n"
         "/prem — статус подписки\n"
         "/settings — изменить параметры\n\n"
-        "После каждого диалога вы можете пожаловаться на собеседника",
+        "После каждого диалога вы можете пожаловаться на собеседника\n\n"
+        "⚠️ Напишите /start для обновления клавиатуры",
         reply_markup=kb
     )
     return ConversationHandler.END
@@ -337,7 +338,8 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ref — реферальная система\n"
         "/prem — статус подписки\n"
         "/settings — изменить параметры\n\n"
-        "После каждого диалога вы можете пожаловаться на собеседника",
+        "После каждого диалога вы можете пожаловаться на собеседника\n\n"
+        "⚠️ Напишите /start для обновления клавиатуры",
         reply_markup=kb
     )
     return ConversationHandler.END
@@ -389,6 +391,10 @@ async def giveprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = int(context.args[1]) if len(context.args) > 1 else 7
     give_premium(target, days)
     await update.message.reply_text(f"✅ Premium выдан пользователю <code>{target}</code> на {days} дн.", parse_mode="HTML")
+    try:
+        await context.bot.send_message(target, f"🎉 Администратор выдал вам Premium на {days} дн.\n\n⚠️ Напишите /start для обновления клавиатуры")
+    except:
+        pass
 
 async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -441,9 +447,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_history[user_id] = []
             chat_history[partner_id] = []
 
-            if target_gender:
-                found_text = "девушка" if target_gender == "female" else "парень"
-                my_msg = f"🔎🤖 Найдена {found_text}!\n\nПриятного общения!\n/stop — остановить диалог"
+            if target_gender == "female":
+                my_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
+            elif target_gender == "male":
+                my_msg = "🔎🤖 Найден парень!\n\nПриятного общения!\n/stop — остановить диалог"
             else:
                 my_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
 
@@ -563,7 +570,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/ref — реферальная система\n"
             "/prem — статус подписки\n"
             "/settings — изменить параметры\n\n"
-            "После каждого диалога вы можете пожаловаться на собеседника",
+            "После каждого диалога вы можете пожаловаться на собеседника\n\n"
+            "⚠️ Напишите /start для обновления клавиатуры",
             reply_markup=kb
         )
         return
