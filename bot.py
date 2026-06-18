@@ -314,7 +314,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     await update.message.reply_text("Выбери свой пол:", reply_markup=gender_keyboard())
     return CHOOSING_GENDER
 
