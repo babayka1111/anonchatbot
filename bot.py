@@ -1,4 +1,4 @@
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 import sqlite3
 from datetime import datetime, timedelta
@@ -8,7 +8,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8922302493:AAEPirPWaUCZNE4xShfCdGyU0JG3-QrZ3Uc")
-MODER_BOT_TOKEN = "8766775527:AAG-qpeP0QcgMY4cJjA8cxPhoa9037FldgQ"
 ADMIN_ID = 7421345767
 PORT = int(os.environ.get("PORT", 10000))
 CHOOSING_GENDER = 0
@@ -33,7 +32,6 @@ active_chats = {}
 searching_users = set()
 chat_history = {}
 pending_reports = {}
-dialog_counter = 0
 
 def init_db():
     conn = sqlite3.connect("bot.db")
@@ -43,24 +41,8 @@ def init_db():
     c.execute("""CREATE TABLE IF NOT EXISTS premium (user_id INTEGER PRIMARY KEY, premium_until TEXT, activated_at TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS genders (user_id INTEGER PRIMARY KEY, gender TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS ref_codes (user_id INTEGER PRIMARY KEY, code TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS messages (dialog_id TEXT, user_id INTEGER, msg_text TEXT, timestamp TEXT)""")
     conn.commit()
     conn.close()
-
-def save_message(dialog_id: str, user_id: int, text: str):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO messages VALUES (?, ?, ?, ?)", (dialog_id, user_id, text, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-
-def get_dialog_messages(dialog_id: str):
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    c.execute("SELECT user_id, msg_text, timestamp FROM messages WHERE dialog_id = ? ORDER BY timestamp", (dialog_id,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
 
 def ban_user(user_id: int, reason: str, days: int = None):
     conn = sqlite3.connect("bot.db")
@@ -367,8 +349,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender = get_gender(user_id)
     if gender is None:
         await update.message.reply_text(
-            "⚠️ Сначала выбери свой пол с помощью /start",
-            reply_markup=gender_keyboard()
+            "⚠️ Сначала выбери свой пол:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🙎‍♂️ Я парень", callback_data="gender_male"),
+                 InlineKeyboardButton("🙎‍♀️ Я девушка", callback_data="gender_female")]
+            ])
         )
         return
 
@@ -415,13 +400,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             searching_users.discard(user_id)
             active_chats[user_id] = partner_id
             active_chats[partner_id] = user_id
-
-            global dialog_counter
-            dialog_counter += 1
-            dialog_id = f"dialog_{dialog_counter}"
-            chat_history[user_id] = dialog_id
-            chat_history[partner_id] = dialog_id
-
+            chat_history[user_id] = []
+            chat_history[partner_id] = []
             text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
             await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
             await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
@@ -438,11 +418,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "⏹ Стоп":
         partner_id = active_chats.pop(user_id, None)
         if partner_id:
-            dialog_id = chat_history.pop(user_id, None)
             active_chats.pop(partner_id, None)
+            if user_id in chat_history and partner_id in chat_history:
+                combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+                pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+            chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
-            if dialog_id:
-                pending_reports[f"{user_id}_{partner_id}"] = {"dialog_id": dialog_id, "user1": user_id, "user2": partner_id}
 
             kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
             await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
@@ -467,11 +448,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         partner_id = active_chats.pop(user_id, None)
         if partner_id:
-            dialog_id = chat_history.pop(user_id, None)
             active_chats.pop(partner_id, None)
+            if user_id in chat_history and partner_id in chat_history:
+                combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+                pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+            chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
-            if dialog_id:
-                pending_reports[f"{user_id}_{partner_id}"] = {"dialog_id": dialog_id, "user1": user_id, "user2": partner_id}
 
             kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
             await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
@@ -492,11 +474,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     partner_id = active_chats[user_id]
+
     count_referral(user_id)
 
-    dialog_id = chat_history.get(user_id, "unknown")
-    msg_text = update.message.text or update.message.caption or "[медиа]"
-    save_message(dialog_id, user_id, msg_text)
+    if user_id not in chat_history:
+        chat_history[user_id] = []
+    chat_history[user_id].append(f"<code>{user_id}</code>: {update.message.text or '[медиа]'}")
 
     if update.message.sticker:
         await context.bot.send_sticker(partner_id, update.message.sticker.file_id)
@@ -521,6 +504,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
+    if data in ["gender_male", "gender_female"]:
+        gender = "male" if data == "gender_male" else "female"
+        set_gender(user_id, gender)
+        kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
+        await query.edit_message_text("✅ Пол сохранён!")
+        await query.message.reply_text(
+            "👋 Привет! Это анонимный чат.\n"
+            "Общайся вежливо, соблюдай правила поведения.\n\n"
+            "Нажми кнопку ниже, чтобы начать поиск.",
+            reply_markup=kb
+        )
+        return
+
     if data == "report":
         found = None
         for rid, info in pending_reports.items():
@@ -530,13 +526,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if found:
             info = pending_reports.pop(found)
             other_user = info["user2"] if user_id == info["user1"] else info["user1"]
-            msgs = get_dialog_messages(info["dialog_id"])
-            msg_text = "\n".join([f"<a href='tg://user?id={uid}'>{uid}</a>: {txt}" for uid, txt, _ in msgs[-20:]]) if msgs else "Нет сообщений"
-            moder_bot = Bot(token=MODER_BOT_TOKEN)
-            await moder_bot.send_message(
+            msgs = "\n".join(info["messages"][-15:]) if info["messages"] else "Нет сообщений"
+            await context.bot.send_message(
                 ADMIN_ID,
-                f"🚩 <b>Жалоба на пользователя</b> <a href='tg://user?id={other_user}'>{other_user}</a>\n\n"
-                f"<b>Диалог:</b>\n{msg_text}\n\nВыберите действие:",
+                f"🚩 <b>Жалоба на пользователя</b> <code>{other_user}</code>\n\n"
+                f"<b>Диалог:</b>\n{msgs}\n\nВыберите действие:",
                 parse_mode="HTML",
                 reply_markup=admin_ban_keyboard(other_user)
             )
@@ -558,7 +552,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         days = days_map.get(action)
         ban_user(target_id, "Жалоба от пользователя", days)
         reason_text = f"на {days} дн." if days else "навсегда"
-        await query.edit_message_text(f"⛔ Пользователь <a href='tg://user?id={target_id}'>{target_id}</a> забанен ({reason_text}).", parse_mode="HTML")
+        await query.edit_message_text(f"⛔ Пользователь <code>{target_id}</code> забанен ({reason_text}).", parse_mode="HTML")
         try:
             await context.bot.send_message(target_id, f"🚫 Вы заблокированы ({reason_text}) за нарушение правил.")
         except:
@@ -598,7 +592,7 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Неверный формат.")
         return
     ban_user(target, "Бан от администратора", days)
-    await update.message.reply_text(f"⛔ Пользователь <a href='tg://user?id={target}'>{target}</a> забанен ({reason_text}).", parse_mode="HTML")
+    await update.message.reply_text(f"⛔ Пользователь <code>{target}</code> забанен ({reason_text}).", parse_mode="HTML")
     try:
         await context.bot.send_message(target, f"🚫 Вы заблокированы ({reason_text}) администратором.")
     except:
@@ -639,7 +633,7 @@ async def banlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = "📋 <b>Забаненные:</b>\n\n"
     for uid, reason, until in rows:
-        text += f"<a href='tg://user?id={uid}'>{uid}</a> — {reason} — {until}\n"
+        text += f"<code>{uid}</code> — {reason} — {until}\n"
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -672,11 +666,12 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     partner_id = active_chats.pop(user_id, None)
     if partner_id:
-        dialog_id = chat_history.pop(user_id, None)
         active_chats.pop(partner_id, None)
+        if user_id in chat_history and partner_id in chat_history:
+            combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+        chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
-        if dialog_id:
-            pending_reports[f"{user_id}_{partner_id}"] = {"dialog_id": dialog_id, "user1": user_id, "user2": partner_id}
         kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
         await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
@@ -692,11 +687,12 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     partner_id = active_chats.pop(user_id, None)
     if partner_id:
-        dialog_id = chat_history.pop(user_id, None)
         active_chats.pop(partner_id, None)
+        if user_id in chat_history and partner_id in chat_history:
+            combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+        chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
-        if dialog_id:
-            pending_reports[f"{user_id}_{partner_id}"] = {"dialog_id": dialog_id, "user1": user_id, "user2": partner_id}
         kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
         await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
@@ -734,14 +730,14 @@ def main():
     app.add_handler(CommandHandler("ban", ban_cmd))
     app.add_handler(CommandHandler("unban", unban_cmd))
     app.add_handler(CommandHandler("banlist", banlist_cmd))
-    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(report|ban_).*"))
+    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(report|ban_|gender_).*"))
     app.add_handler(MessageHandler(
         filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
         filters.Sticker.ALL | filters.Document.ALL | filters.VIDEO_NOTE |
         filters.ANIMATION, handle_message
     ))
 
-    print("Основной бот запущен...")
+    print("Бот запущен...")
     app.run_polling()
 
 if __name__ == "__main__":
