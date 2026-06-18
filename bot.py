@@ -28,7 +28,6 @@ def run_health_server():
 
 waiting_users = {}
 active_chats = {}
-searching_users = set()
 chat_history = {}
 pending_reports = {}
 
@@ -179,8 +178,24 @@ def get_premium_info(user_id: int):
     passed = now - activated
     return remaining, passed
 
+def give_premium(user_id: int, days: int = 7):
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    now = datetime.now()
+    premium_until = (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
+              (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+
+def take_premium(user_id: int):
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    c.execute("DELETE FROM premium WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
 def find_partner(user_id: int, target_gender: str | None):
-    """Ищет партнёра среди waiting_users."""
     candidates = []
     for uid, data in waiting_users.items():
         if uid == user_id:
@@ -190,7 +205,6 @@ def find_partner(user_id: int, target_gender: str | None):
                 candidates.append(uid)
         else:
             candidates.append(uid)
-    
     if candidates:
         partner_id = random.choice(candidates)
         del waiting_users[partner_id]
@@ -330,6 +344,43 @@ async def prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
+async def giveprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /giveprem [user_id] [дни]\nПример: /giveprem 123456 7")
+        return
+    try:
+        target = int(context.args[0])
+    except:
+        await update.message.reply_text("Неверный ID.")
+        return
+    days = int(context.args[1]) if len(context.args) > 1 else 7
+    give_premium(target, days)
+    await update.message.reply_text(f"✅ Premium выдан пользователю <code>{target}</code> на {days} дн.", parse_mode="HTML")
+    try:
+        await context.bot.send_message(target, f"🎉 Администратор выдал вам Premium на {days} дн.\nНапишите /start для обновления клавиатуры.")
+    except:
+        pass
+
+async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /takeprem [user_id]")
+        return
+    try:
+        target = int(context.args[0])
+    except:
+        await update.message.reply_text("Неверный ID.")
+        return
+    take_premium(target)
+    await update.message.reply_text(f"❌ Premium забран у пользователя <code>{target}</code>.", parse_mode="HTML")
+    try:
+        await context.bot.send_message(target, "Ваш Premium был отозван администратором.")
+    except:
+        pass
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -365,7 +416,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "🙎‍♂️ Парня":
             target_gender = "male"
 
-        # Ищем пару
         partner_id = find_partner(user_id, target_gender)
 
         if partner_id:
@@ -529,7 +579,7 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     if len(context.args) < 2:
-        await update.message.reply_text("Использование: /ban [user_id] [срок]\nПримеры: 1d, 7d, 30d, 1y, forever")
+        await update.message.reply_text("/ban [user_id] [срок]\nПримеры: 1d, 7d, 30d, 1y, forever")
         return
     try:
         target = int(context.args[0])
@@ -567,7 +617,7 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     if not context.args:
-        await update.message.reply_text("Использование: /unban [user_id]")
+        await update.message.reply_text("/unban [user_id]")
         return
     try:
         target = int(context.args[0])
@@ -604,7 +654,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in waiting_users:
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
         return
-
     partner_id = find_partner(user_id, None)
     if partner_id:
         active_chats[user_id] = partner_id
@@ -689,6 +738,8 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("ref", ref_cmd))
     app.add_handler(CommandHandler("prem", prem_cmd))
+    app.add_handler(CommandHandler("giveprem", giveprem_cmd))
+    app.add_handler(CommandHandler("takeprem", takeprem_cmd))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop_chat))
