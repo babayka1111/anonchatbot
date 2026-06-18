@@ -298,9 +298,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
     await update.message.reply_text(
-        "👋 Привет! Это анонимный чат.\nОбщайся вежливо, соблюдай правила поведения.\n\n"
-        "Нажми кнопку ниже, чтобы начать поиск собеседника.\n\n"
-        "/ref — реферальная система\n/prem — статус подписки\n/settings — изменить параметры",
+        "👋 Привет! Это анонимный чат.\n"
+        "Общайся вежливо, соблюдай правила поведения.\n\n"
+        "Нажми кнопку ниже, чтобы начать поиск случайного собеседника.\n\n"
+        "/start — перезапуск бота\n"
+        "/search — поиск собеседника\n"
+        "/next — переключить собеседника\n"
+        "/stop — завершить диалог\n"
+        "/ref — реферальная система\n"
+        "/prem — статус подписки\n"
+        "/settings — изменить параметры\n\n"
+        "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
     )
     return ConversationHandler.END
@@ -318,7 +326,20 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_gender(user_id, gender)
     kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
     await query.edit_message_text("✅ Пол сохранён!")
-    await query.message.reply_text("Нажми кнопку ниже, чтобы начать поиск.", reply_markup=kb)
+    await query.message.reply_text(
+        "👋 Привет! Это анонимный чат.\n"
+        "Общайся вежливо, соблюдай правила поведения.\n\n"
+        "Нажми кнопку ниже, чтобы начать поиск случайного собеседника.\n\n"
+        "/start — перезапуск бота\n"
+        "/search — поиск собеседника\n"
+        "/next — переключить собеседника\n"
+        "/stop — завершить диалог\n"
+        "/ref — реферальная система\n"
+        "/prem — статус подписки\n"
+        "/settings — изменить параметры\n\n"
+        "После каждого диалога вы можете пожаловаться на собеседника",
+        reply_markup=kb
+    )
     return ConversationHandler.END
 
 async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -529,7 +550,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_gender(user_id, gender)
         kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
         await query.edit_message_text("✅ Пол сохранён!")
-        await query.message.reply_text("Нажми кнопку ниже, чтобы начать поиск.", reply_markup=kb)
+        await query.message.reply_text(
+            "👋 Привет! Это анонимный чат.\n"
+            "Общайся вежливо, соблюдай правила поведения.\n\n"
+            "Нажми кнопку ниже, чтобы начать поиск случайного собеседника.\n\n"
+            "/start — перезапуск бота\n"
+            "/search — поиск собеседника\n"
+            "/next — переключить собеседника\n"
+            "/stop — завершить диалог\n"
+            "/ref — реферальная система\n"
+            "/prem — статус подписки\n"
+            "/settings — изменить параметры\n\n"
+            "После каждого диалога вы можете пожаловаться на собеседника",
+            reply_markup=kb
+        )
         return
 
     if data == "report":
