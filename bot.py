@@ -1,4 +1,4 @@
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 import sqlite3
 from datetime import datetime, timedelta
@@ -227,7 +227,8 @@ async def notify_moderator(context: ContextTypes.DEFAULT_TYPE, user_id: int, par
         return
     try:
         msg = f"💬 <a href='tg://user?id={user_id}'>{user_id}</a>: {text or '[медиа]'}"
-        await context.bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
+        moder_bot = Bot(token=MODER_BOT_TOKEN)
+        await moder_bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
     except:
         pass
 
@@ -520,7 +521,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info = pending_reports.pop(found)
             other_user = info["user2"] if user_id == info["user1"] else info["user1"]
             msgs = "\n".join(info["messages"][-15:]) if info["messages"] else "Нет сообщений"
-            await context.bot.send_message(
+            moder_bot = Bot(token=MODER_BOT_TOKEN)
+            await moder_bot.send_message(
                 ADMIN_ID,
                 f"🚩 <b>Жалоба на пользователя</b> <a href='tg://user?id={other_user}'>{other_user}</a>\n\n"
                 f"<b>Диалог:</b>\n{msgs}\n\nВыберите действие:",
