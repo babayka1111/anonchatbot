@@ -132,12 +132,11 @@ def count_referral(referral_id: int, context=None):
     conn.close()
     if row:
         check_premium(row[0])
-        # Уведомляем пригласившего
         if context:
             try:
                 context.bot.send_message(
                     row[0],
-                    f"🎉 Ваш реферал <code>{referral_id}</code> начал общаться! ({get_referral_count(row[0])}/{REFERRALS_NEEDED})",
+                    f"🎉 Ваш реферал начал общаться! ({get_referral_count(row[0])}/{REFERRALS_NEEDED})",
                     parse_mode="HTML"
                 )
             except:
@@ -230,6 +229,7 @@ async def post_init(application: Application):
         ("stop", "Остановить диалог / поиск"),
         ("ref", "Реферальная система"),
         ("prem", "Статус подписки"),
+        ("settings", "Изменить пол"),
     ])
     init_db()
 
@@ -309,11 +309,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/next — переключить собеседника\n"
         "/stop — завершить диалог\n"
         "/ref — реферальная система\n"
-        "/prem — статус подписки\n\n"
+        "/prem — статус подписки\n"
+        "/settings — изменить пол\n\n"
         "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
     )
     return ConversationHandler.END
+
+async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await update.message.reply_text(
+        "Выбери свой пол:",
+        reply_markup=gender_keyboard()
+    )
+    return CHOOSING_GENDER
 
 async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -322,7 +331,7 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender = "male" if query.data == "gender_male" else "female"
     set_gender(user_id, gender)
     kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
-    await query.edit_message_text("✅ Пол сохранён!")
+    await query.edit_message_text("✅ Пол изменён!")
     await query.message.reply_text(
         "👋 Привет! Это анонимный чат.\n"
         "Общайся вежливо, соблюдай правила поведения.\n\n"
@@ -332,7 +341,8 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/next — переключить собеседника\n"
         "/stop — завершить диалог\n"
         "/ref — реферальная система\n"
-        "/prem — статус подписки\n\n"
+        "/prem — статус подписки\n"
+        "/settings — изменить пол\n\n"
         "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
     )
@@ -453,14 +463,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_chats[partner_id] = user_id
             chat_history[user_id] = []
             chat_history[partner_id] = []
-            partner_gender = get_gender(partner_id)
+            # Только ищущий видит кого нашёл
             if target_gender:
                 found_text = "девушка" if target_gender == "female" else "парень"
                 text_msg = f"🔎🤖 Найдена {found_text}!\n\nПриятного общения!\n/stop — остановить диалог"
             else:
                 text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+            # Второй собеседник видит стандартное сообщение
+            text_msg_partner = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
             await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
-            await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
+            await context.bot.send_message(partner_id, text_msg_partner, reply_markup=chat_keyboard())
         else:
             waiting_users[user_id] = {"gender": gender, "target": target_gender}
             if target_gender:
@@ -561,7 +573,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         gender = "male" if data == "gender_male" else "female"
         set_gender(user_id, gender)
         kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
-        await query.edit_message_text("✅ Пол сохранён!")
+        await query.edit_message_text("✅ Пол изменён!")
         await query.message.reply_text(
             "👋 Привет! Это анонимный чат.\n"
             "Общайся вежливо, соблюдай правила поведения.\n\n"
@@ -571,7 +583,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/next — переключить собеседника\n"
             "/stop — завершить диалог\n"
             "/ref — реферальная система\n"
-            "/prem — статус подписки\n\n"
+            "/prem — статус подписки\n"
+            "/settings — изменить пол\n\n"
             "После каждого диалога вы можете пожаловаться на собеседника",
             reply_markup=kb
         )
@@ -782,7 +795,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler("start", start), CommandHandler("settings", settings_cmd)],
         states={CHOOSING_GENDER: [CallbackQueryHandler(gender_callback, pattern="^gender_")]},
         fallbacks=[],
     )
