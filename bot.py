@@ -6,6 +6,7 @@ import os
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+import random
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8922302493:AAEPirPWaUCZNE4xShfCdGyU0JG3-QrZ3Uc")
 ADMIN_ID = 7421345767
@@ -25,9 +26,8 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
     server.serve_forever()
 
-waiting_queue = []
-waiting_male = []
-waiting_female = []
+# Единая структура очереди: {user_id: {"gender": "male"/"female", "target": None/"male"/"female"}}
+waiting_users = {}
 active_chats = {}
 searching_users = set()
 chat_history = {}
@@ -180,6 +180,27 @@ def get_premium_info(user_id: int):
     passed = now - activated
     return remaining, passed
 
+def find_partner(user_id: int, target_gender: str | None):
+    """Ищет партнёра в очереди. Возвращает partner_id или None."""
+    candidates = []
+    for uid, data in waiting_users.items():
+        if uid == user_id:
+            continue
+        if uid in active_chats or uid in searching_users:
+            continue
+        # Если ищем конкретный пол
+        if target_gender:
+            if data["gender"] == target_gender:
+                candidates.append(uid)
+        else:
+            candidates.append(uid)
+    
+    if candidates:
+        partner_id = random.choice(candidates)
+        del waiting_users[partner_id]
+        return partner_id
+    return None
+
 async def post_init(application: Application):
     await application.bot.set_my_commands([
         ("start", "Главное меню"),
@@ -303,7 +324,6 @@ async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = get_referral_count(user_id)
     has_prem = has_premium(user_id)
     prem_info = get_premium_info(user_id)
-
     text = (
         "🔗 <b>Реферальная система</b>\n\n"
         "✅ Пригласи 10 друзей, которые <b>реально пообщаются</b> в боте "
@@ -325,10 +345,7 @@ async def prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     prem_info = get_premium_info(user_id)
     if not prem_info:
-        await update.message.reply_text(
-            "❌ У вас нет активной подписки.\n"
-            "Пригласите 10 друзей через /ref чтобы получить доступ к поиску по полу."
-        )
+        await update.message.reply_text("❌ У вас нет активной подписки.\nПригласите 10 друзей через /ref.")
         return
     remaining, passed = prem_info
     await update.message.reply_text(
@@ -363,39 +380,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in active_chats:
             await update.message.reply_text("🤖 Вы уже в диалоге.\n/stop — остановить диалог", reply_markup=chat_keyboard())
             return
-        if user_id in searching_users:
+        if user_id in searching_users or user_id in waiting_users:
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
 
-        if user_id in waiting_queue: waiting_queue.remove(user_id)
-        if user_id in waiting_male: waiting_male.remove(user_id)
-        if user_id in waiting_female: waiting_female.remove(user_id)
-
-        searching_users.add(user_id)
         target_gender = None
         if text == "🙎‍♀️ Девушку":
             target_gender = "female"
         elif text == "🙎‍♂️ Парня":
             target_gender = "male"
 
-        partner_id = None
-
-        if target_gender == "female":
-            if waiting_female:
-                partner_id = waiting_female.pop(0)
-        elif target_gender == "male":
-            if waiting_male:
-                partner_id = waiting_male.pop(0)
-        else:
-            all_waiting = waiting_male + waiting_female + waiting_queue
-            if all_waiting:
-                partner_id = all_waiting.pop(0)
+        searching_users.add(user_id)
+        partner_id = find_partner(user_id, target_gender)
 
         if partner_id:
-            if partner_id in waiting_male: waiting_male.remove(partner_id)
-            if partner_id in waiting_female: waiting_female.remove(partner_id)
-            if partner_id in waiting_queue: waiting_queue.remove(partner_id)
-
             searching_users.discard(partner_id)
             searching_users.discard(user_id)
             active_chats[user_id] = partner_id
@@ -406,12 +404,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
             await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
         else:
-            if target_gender == "female":
-                waiting_female.append(user_id)
-            elif target_gender == "male":
-                waiting_male.append(user_id)
-            else:
-                waiting_queue.append(user_id)
+            waiting_users[user_id] = {"gender": gender, "target": target_gender}
             await update.message.reply_text("🔍 Поиск собеседника...\n🤖 /stop — остановить поиск")
         return
 
@@ -435,15 +428,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             if user_id in searching_users:
                 searching_users.discard(user_id)
-                if user_id in waiting_queue: waiting_queue.remove(user_id)
-                if user_id in waiting_male: waiting_male.remove(user_id)
-                if user_id in waiting_female: waiting_female.remove(user_id)
+            if user_id in waiting_users:
+                del waiting_users[user_id]
             kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
             await update.message.reply_text("🤖 Поиск остановлен\n/search — начать поиск собеседника", reply_markup=kb)
         return
 
     if text == "⏭ Следующий":
         if user_id in searching_users and user_id not in active_chats:
+            await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
+            return
+        if user_id in waiting_users:
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
         partner_id = active_chats.pop(user_id, None)
@@ -454,18 +449,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
             chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
-
             kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
             await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
             await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
-
             await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
-        if user_id in waiting_queue: waiting_queue.remove(user_id)
-        if user_id in waiting_male: waiting_male.remove(user_id)
-        if user_id in waiting_female: waiting_female.remove(user_id)
+
         searching_users.add(user_id)
-        waiting_queue.append(user_id)
-        await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
+        partner_id = find_partner(user_id, None)
+
+        if partner_id:
+            searching_users.discard(partner_id)
+            searching_users.discard(user_id)
+            active_chats[user_id] = partner_id
+            active_chats[partner_id] = user_id
+            chat_history[user_id] = []
+            chat_history[partner_id] = []
+            text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+            await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
+            await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
+        else:
+            waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+            await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
         return
 
     if user_id not in active_chats:
@@ -474,7 +478,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     partner_id = active_chats[user_id]
-
     count_referral(user_id)
 
     if user_id not in chat_history:
@@ -509,12 +512,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_gender(user_id, gender)
         kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
         await query.edit_message_text("✅ Пол сохранён!")
-        await query.message.reply_text(
-            "👋 Привет! Это анонимный чат.\n"
-            "Общайся вежливо, соблюдай правила поведения.\n\n"
-            "Нажми кнопку ниже, чтобы начать поиск.",
-            reply_markup=kb
-        )
+        await query.message.reply_text("👋 Привет! Это анонимный чат.\nОбщайся вежливо, соблюдай правила поведения.\n\nНажми кнопку ниже, чтобы начать поиск.", reply_markup=kb)
         return
 
     if data == "report":
@@ -562,9 +560,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_chats.pop(partner_id, None)
             kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
             await context.bot.send_message(partner_id, "🤖 Собеседник отключён.", reply_markup=kb)
-        if target_id in waiting_queue: waiting_queue.remove(target_id)
-        if target_id in waiting_male: waiting_male.remove(target_id)
-        if target_id in waiting_female: waiting_female.remove(target_id)
+        if target_id in waiting_users:
+            del waiting_users[target_id]
         searching_users.discard(target_id)
 
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -602,9 +599,8 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_chats.pop(partner_id, None)
         kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
         await context.bot.send_message(partner_id, "🤖 Собеседник отключён.", reply_markup=kb)
-    if target in waiting_queue: waiting_queue.remove(target)
-    if target in waiting_male: waiting_male.remove(target)
-    if target in waiting_female: waiting_female.remove(target)
+    if target in waiting_users:
+        del waiting_users[target]
     searching_users.discard(target)
 
 async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -645,15 +641,26 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in active_chats:
         await update.message.reply_text("🤖 Вы уже в диалоге.", reply_markup=chat_keyboard())
         return
-    if user_id in searching_users:
+    if user_id in searching_users or user_id in waiting_users:
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
         return
-    if user_id in waiting_queue: waiting_queue.remove(user_id)
-    if user_id in waiting_male: waiting_male.remove(user_id)
-    if user_id in waiting_female: waiting_female.remove(user_id)
+
     searching_users.add(user_id)
-    waiting_queue.append(user_id)
-    await update.message.reply_text("🔍 Ждём собеседника...\n🤖 /stop — остановить поиск")
+    partner_id = find_partner(user_id, None)
+
+    if partner_id:
+        searching_users.discard(partner_id)
+        searching_users.discard(user_id)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+        chat_history[user_id] = []
+        chat_history[partner_id] = []
+        text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+        await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
+        await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
+    else:
+        waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+        await update.message.reply_text("🔍 Ждём собеседника...\n🤖 /stop — остановить поиск")
 
 async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -661,9 +668,10 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if banned:
         await update.message.reply_text(f"🚫 Вы заблокированы ({reason}).")
         return
-    if user_id in searching_users and user_id not in active_chats:
+    if (user_id in searching_users or user_id in waiting_users) and user_id not in active_chats:
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
         return
+
     partner_id = active_chats.pop(user_id, None)
     if partner_id:
         active_chats.pop(partner_id, None)
@@ -676,12 +684,23 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
         await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
-    if user_id in waiting_queue: waiting_queue.remove(user_id)
-    if user_id in waiting_male: waiting_male.remove(user_id)
-    if user_id in waiting_female: waiting_female.remove(user_id)
+
     searching_users.add(user_id)
-    waiting_queue.append(user_id)
-    await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
+    partner_id = find_partner(user_id, None)
+
+    if partner_id:
+        searching_users.discard(partner_id)
+        searching_users.discard(user_id)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+        chat_history[user_id] = []
+        chat_history[partner_id] = []
+        text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+        await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
+        await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
+    else:
+        waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+        await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
 
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -699,11 +718,10 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb2 = premium_keyboard() if has_premium(user_id) else main_keyboard()
         await update.message.reply_text("🤖 Диалог остановлен", reply_markup=report_keyboard())
         await update.message.reply_text("/search — начать поиск собеседника", reply_markup=kb2)
-    elif user_id in searching_users:
+    elif user_id in searching_users or user_id in waiting_users:
         searching_users.discard(user_id)
-        if user_id in waiting_queue: waiting_queue.remove(user_id)
-        if user_id in waiting_male: waiting_male.remove(user_id)
-        if user_id in waiting_female: waiting_female.remove(user_id)
+        if user_id in waiting_users:
+            del waiting_users[user_id]
         kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
         await update.message.reply_text("🤖 Поиск остановлен\n/search — начать поиск собеседника", reply_markup=kb)
     else:
@@ -712,7 +730,6 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
-
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv_handler = ConversationHandler(
