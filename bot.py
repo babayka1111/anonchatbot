@@ -717,4 +717,77 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
         chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
-        kb = premium_keyboard() if has_premium(partner_id) else
+        kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
+        await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
+        await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
+        await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
+    partner_id = find_partner(user_id, None)
+    if partner_id:
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+        chat_history[user_id] = []
+        chat_history[partner_id] = []
+        text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+        await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
+        await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
+    else:
+        waiting_users[user_id] = {"gender": get_gender(user_id), "target": None}
+        await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
+
+async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    partner_id = active_chats.pop(user_id, None)
+    if partner_id:
+        active_chats.pop(partner_id, None)
+        if user_id in chat_history and partner_id in chat_history:
+            combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+        chat_history.pop(user_id, None)
+        chat_history.pop(partner_id, None)
+        kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
+        await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
+        await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
+        kb2 = premium_keyboard() if has_premium(user_id) else main_keyboard()
+        await update.message.reply_text("🤖 Диалог остановлен", reply_markup=report_keyboard())
+        await update.message.reply_text("/search — начать поиск собеседника", reply_markup=kb2)
+    elif user_id in waiting_users:
+        del waiting_users[user_id]
+        kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
+        await update.message.reply_text("🤖 Поиск остановлен\n/search — начать поиск собеседника", reply_markup=kb)
+    else:
+        kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
+        await update.message.reply_text("🤖 Вы ни с кем не общаетесь\n/search — начать поиск собеседника", reply_markup=kb)
+
+def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={CHOOSING_GENDER: [CallbackQueryHandler(gender_callback, pattern="^gender_")]},
+        fallbacks=[],
+    )
+
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("ref", ref_cmd))
+    app.add_handler(CommandHandler("prem", prem_cmd))
+    app.add_handler(CommandHandler("giveprem", giveprem_cmd))
+    app.add_handler(CommandHandler("takeprem", takeprem_cmd))
+    app.add_handler(CommandHandler("search", search))
+    app.add_handler(CommandHandler("next", next_chat))
+    app.add_handler(CommandHandler("stop", stop_chat))
+    app.add_handler(CommandHandler("ban", ban_cmd))
+    app.add_handler(CommandHandler("unban", unban_cmd))
+    app.add_handler(CommandHandler("banlist", banlist_cmd))
+    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(report|ban_|gender_).*"))
+    app.add_handler(MessageHandler(
+        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
+        filters.Sticker.ALL | filters.Document.ALL | filters.VIDEO_NOTE |
+        filters.ANIMATION, handle_message
+    ))
+
+    print("Бот запущен...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
