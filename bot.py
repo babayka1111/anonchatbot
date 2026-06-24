@@ -31,6 +31,7 @@ waiting_users = {}
 active_chats = {}
 chat_history = {}
 pending_reports = {}
+expired_notified = set()
 
 def init_db():
     conn = sqlite3.connect("bot.db")
@@ -122,6 +123,14 @@ def add_referral(user_id: int, referral_id: int):
     conn.commit()
     conn.close()
 
+def reset_referrals(user_id: int):
+    """Сбрасывает счётчик рефералов для пользователя."""
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    c.execute("UPDATE referrals SET counted = 0 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
 def count_referral(referral_id: int, context=None):
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
@@ -131,7 +140,7 @@ def count_referral(referral_id: int, context=None):
     conn.commit()
     conn.close()
     if row:
-        check_premium(row[0])
+        check_premium(row[0], context)
         if context:
             try:
                 context.bot.send_message(
@@ -141,7 +150,7 @@ def count_referral(referral_id: int, context=None):
             except:
                 pass
 
-def check_premium(user_id: int):
+def check_premium(user_id: int, context=None):
     count = get_referral_count(user_id)
     if count >= REFERRALS_NEEDED:
         conn = sqlite3.connect("bot.db")
@@ -149,13 +158,28 @@ def check_premium(user_id: int):
         c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
         row = c.fetchone()
         now = datetime.now()
-        if not row or datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") < now:
+        # Проверяем, не было ли уже активной подписки
+        had_active = False
+        if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
+            had_active = True
+        
+        if not had_active:
             premium_until = (now + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
             c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
                       (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
-        conn.commit()
+            conn.commit()
+            conn.close()
+            # Уведомление о получении Premium
+            if context:
+                try:
+                    context.bot.send_message(
+                        user_id,
+                        "🎉 Поздравляем! Вы получили Premium на 7 дней!\nНапишите /start для обновления клавиатуры"
+                    )
+                except:
+                    pass
+            return True
         conn.close()
-        return True
     return False
 
 def has_premium(user_id: int):
@@ -170,7 +194,7 @@ def has_premium(user_id: int):
         return False
     return True
 
-def get_premium_info(user_id: int):
+def get_premium_info(user_id: int, context=None):
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
     c.execute("SELECT premium_until, activated_at FROM premium WHERE user_id = ?", (user_id,))
@@ -182,6 +206,18 @@ def get_premium_info(user_id: int):
     activated = datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
     now = datetime.now()
     if until < now:
+        # Premium истёк — сбрасываем счётчик рефералов
+        reset_referrals(user_id)
+        # Уведомляем один раз
+        if user_id not in expired_notified and context:
+            expired_notified.add(user_id)
+            try:
+                context.bot.send_message(
+                    user_id,
+                    "⏰ Ваш Premium истёк. Счётчик рефералов сброшен.\nПригласите 5 друзей чтобы получить Premium снова!"
+                )
+            except:
+                pass
         return None
     remaining = until - now
     passed = now - activated
@@ -196,6 +232,8 @@ def give_premium(user_id: int, days: int = 7):
               (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
+    # Убираем из списка уведомлённых об истечении
+    expired_notified.discard(user_id)
 
 def take_premium(user_id: int):
     conn = sqlite3.connect("bot.db")
@@ -299,6 +337,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
         return ConversationHandler.END
 
+    # Проверяем Premium (для уведомления об истечении)
+    if not has_premium(user_id):
+        get_premium_info(user_id, context)
+
     kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
     await update.message.reply_text(
         "👋 Привет! Это анонимный чат.\n"
@@ -350,7 +392,7 @@ async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/{(await context.bot.get_me()).username}?start={code}"
     count = get_referral_count(user_id)
     has_prem = has_premium(user_id)
-    prem_info = get_premium_info(user_id)
+    prem_info = get_premium_info(user_id, context)
     text = (
         "🔗 <b>Реферальная система</b>\n\n"
         f"✅ Пригласи {REFERRALS_NEEDED} друзей, которые <b>реально пообщаются</b> в боте, "
@@ -369,7 +411,7 @@ async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    prem_info = get_premium_info(user_id)
+    prem_info = get_premium_info(user_id, context)
     if not prem_info:
         await update.message.reply_text(f"❌ У вас нет активной подписки.\nПригласите {REFERRALS_NEEDED} друзей через /ref чтобы получить доступ к поиску по полу.")
         return
@@ -432,6 +474,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=gender_keyboard()
             )
             return
+
+        # Проверяем Premium (для уведомления об истечении)
+        if not has_premium(user_id):
+            get_premium_info(user_id, context)
 
         if user_id in active_chats:
             await update.message.reply_text("🤖 Вы уже в диалоге.\n/stop — остановить диалог", reply_markup=chat_keyboard())
@@ -703,7 +749,6 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     ban_user(target, "Бан от администратора", days)
     await update.message.reply_text(f"⛔ Пользователь <code>{target}</code> забанен ({reason_text}).", parse_mode="HTML")
-    # Отправляем уведомление забаненному
     try:
         await context.bot.send_message(target, f"🚫 Вы заблокированы ({reason_text}) администратором.")
     except:
@@ -726,7 +771,6 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = int(context.args[0])
         unban_user(target)
         await update.message.reply_text(f"✅ Пользователь {target} разбанен.")
-        # Отправляем уведомление разбаненному
         try:
             await context.bot.send_message(target, "✅ Вы были разблокированы администратором. Можете снова пользоваться ботом.")
         except:
@@ -769,6 +813,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=gender_keyboard()
         )
         return
+    # Проверяем Premium (для уведомления об истечении)
+    if not has_premium(user_id):
+        get_premium_info(user_id, context)
     partner_id = find_partner(user_id, None, gender)
     if partner_id:
         if partner_id in waiting_users:
