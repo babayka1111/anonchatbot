@@ -204,16 +204,33 @@ def take_premium(user_id: int):
     conn.commit()
     conn.close()
 
-def find_partner(user_id: int, target_gender: str | None):
+def find_partner(user_id: int, target_gender: str | None, my_gender: str | None = None):
+    """
+    Ищет партнёра среди waiting_users.
+    - Если target_gender указан (Premium-поиск), ищет строго по полу.
+    - Если target_gender=None (случайный поиск), ищет любого, НО:
+      если кандидат ищет конкретный пол, его пол должен совпадать с моим полом.
+      Это предотвращает ситуацию когда случайный пользователь "перехватывает" того кто ждёт конкретный пол.
+    """
     candidates = []
     for uid, data in waiting_users.items():
         if uid == user_id:
             continue
+        
         if target_gender:
+            # Premium-поиск: ищем строго по запрошенному полу
             if data["gender"] == target_gender:
                 candidates.append(uid)
         else:
-            candidates.append(uid)
+            # Случайный поиск
+            if data["target"] is None:
+                # Кандидат тоже ищет случайно — подходит
+                candidates.append(uid)
+            else:
+                # Кандидат ищет конкретный пол. Проверяем что мой пол ему подходит
+                if my_gender and data["target"] == my_gender:
+                    candidates.append(uid)
+    
     if candidates:
         partner_id = random.choice(candidates)
         del waiting_users[partner_id]
@@ -439,14 +456,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "🙎‍♂️":
             target_gender = "male"
 
-        partner_id = find_partner(user_id, target_gender)
+        partner_id = find_partner(user_id, target_gender, gender)
 
         if partner_id:
+            # Проверяем, искал ли партнёр конкретный пол
+            partner_data = waiting_users.get(partner_id, {})
+            partner_target = partner_data.get("target") if isinstance(partner_data, dict) else None
+            
             active_chats[user_id] = partner_id
             active_chats[partner_id] = user_id
             chat_history[user_id] = []
             chat_history[partner_id] = []
 
+            # Сообщение для ищущего (того кто нажал кнопку)
             if target_gender == "female":
                 my_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
             elif target_gender == "male":
@@ -454,7 +476,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 my_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
 
-            partner_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+            # Сообщение для найденного (партнёра)
+            if partner_target == "female":
+                partner_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
+            elif partner_target == "male":
+                partner_msg = "🔎🤖 Найден парень!\n\nПриятного общения!\n/stop — остановить диалог"
+            else:
+                partner_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
 
             await update.message.reply_text(my_msg, reply_markup=chat_keyboard())
             await context.bot.send_message(partner_id, partner_msg, reply_markup=chat_keyboard())
@@ -501,6 +529,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in waiting_users and user_id not in active_chats:
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
+        
+        # Сохраняем target_gender перед удалением из waiting_users
+        old_data = waiting_users.get(user_id, {})
+        old_target = old_data.get("target") if isinstance(old_data, dict) else None
+        
         partner_id = active_chats.pop(user_id, None)
         if partner_id:
             active_chats.pop(partner_id, None)
@@ -513,18 +546,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
             await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
             await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
-        partner_id = find_partner(user_id, None)
+        
+        partner_id = find_partner(user_id, old_target, gender)
         if partner_id:
+            partner_data = waiting_users.get(partner_id, {})
+            partner_target = partner_data.get("target") if isinstance(partner_data, dict) else None
+            
             active_chats[user_id] = partner_id
             active_chats[partner_id] = user_id
             chat_history[user_id] = []
             chat_history[partner_id] = []
-            text_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
-            await update.message.reply_text(text_msg, reply_markup=chat_keyboard())
-            await context.bot.send_message(partner_id, text_msg, reply_markup=chat_keyboard())
+            
+            if old_target == "female":
+                my_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
+            elif old_target == "male":
+                my_msg = "🔎🤖 Найден парень!\n\nПриятного общения!\n/stop — остановить диалог"
+            else:
+                my_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+            
+            if partner_target == "female":
+                partner_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
+            elif partner_target == "male":
+                partner_msg = "🔎🤖 Найден парень!\n\nПриятного общения!\n/stop — остановить диалог"
+            else:
+                partner_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
+            
+            await update.message.reply_text(my_msg, reply_markup=chat_keyboard())
+            await context.bot.send_message(partner_id, partner_msg, reply_markup=chat_keyboard())
         else:
-            waiting_users[user_id] = {"gender": gender, "target": None}
-            await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
+            waiting_users[user_id] = {"gender": gender, "target": old_target}
+            if old_target:
+                search_text = "девушку" if old_target == "female" else "парня"
+                await update.message.reply_text(f"🔍 Ищем {search_text}...\n🤖 /stop — остановить поиск")
+            else:
+                await update.message.reply_text("🔍 Ищем собеседника...\n🤖 /stop — остановить поиск")
         return
 
     if user_id not in active_chats:
@@ -711,7 +766,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=gender_keyboard()
         )
         return
-    partner_id = find_partner(user_id, None)
+    partner_id = find_partner(user_id, None, gender)
     if partner_id:
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
@@ -752,7 +807,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(partner_id, "🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
         await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
-    partner_id = find_partner(user_id, None)
+    partner_id = find_partner(user_id, None, gender)
     if partner_id:
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
