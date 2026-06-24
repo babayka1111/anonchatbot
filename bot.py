@@ -205,15 +205,10 @@ def take_premium(user_id: int):
     conn.close()
 
 def find_partner(user_id: int, target_gender: str | None, my_gender: str | None = None):
-    """
-    Ищет партнёра среди waiting_users.
-    Возвращает partner_id или None.
-    """
     candidates = []
     for uid, data in waiting_users.items():
         if uid == user_id:
             continue
-        
         if target_gender:
             if data["gender"] == target_gender:
                 candidates.append(uid)
@@ -223,10 +218,8 @@ def find_partner(user_id: int, target_gender: str | None, my_gender: str | None 
             else:
                 if my_gender and data["target"] == my_gender:
                     candidates.append(uid)
-    
     if candidates:
         partner_id = random.choice(candidates)
-        # Не удаляем здесь, удаляем снаружи после сохранения данных
         return partner_id
     return None
 
@@ -365,9 +358,13 @@ async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔗 Твоя ссылка:\n<code>{link}</code>\n"
         f"📊 Приглашено: {count}/{REFERRALS_NEEDED}\n"
     )
-    if has_prem:
+    if has_prem and prem_info:
         remaining, passed = prem_info
-        text += f"\n✅ <b>Подписка активна!</b>\n⏳ Осталось: {remaining.days} дн. {remaining.seconds // 3600} ч."
+        text += (
+            f"\n✅ <b>Подписка активна!</b>\n"
+            f"⏳ Осталось: {remaining.days} дн. {remaining.seconds // 3600} ч.\n"
+            f"🕐 Прошло: {passed.days} дн. {passed.seconds // 3600} ч."
+        )
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,7 +424,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
 
-    # ====== ПОИСК ПО КНОПКАМ ======
     if text in ["🔀 Случайный", "🙎‍♀️", "🙎‍♂️"]:
         gender = get_gender(user_id)
         if gender is None:
@@ -450,7 +446,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "🙎‍♂️":
             target_gender = "male"
 
-        # Сохраняем данные партнёра ДО удаления из waiting_users
         partner_id = find_partner(user_id, target_gender, gender)
         partner_target = None
         if partner_id and partner_id in waiting_users:
@@ -463,7 +458,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_history[user_id] = []
             chat_history[partner_id] = []
 
-            # Сообщение для ищущего
             if target_gender == "female":
                 my_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
             elif target_gender == "male":
@@ -471,7 +465,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 my_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
 
-            # Сообщение для найденного
             if partner_target == "female":
                 partner_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
             elif partner_target == "male":
@@ -490,7 +483,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("🔍 Поиск собеседника...\n🤖 /stop — остановить поиск")
         return
 
-    # ====== СТОП ======
     if text == "⏹ Стоп":
         partner_id = active_chats.pop(user_id, None)
         if partner_id:
@@ -513,7 +505,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🤖 Поиск остановлен\n/search — начать поиск собеседника", reply_markup=kb)
         return
 
-    # ====== СЛЕДУЮЩИЙ ======
     if text == "⏭ Следующий":
         gender = get_gender(user_id)
         if gender is None:
@@ -527,7 +518,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
         
-        # Сохраняем старый target_gender перед удалением
         old_data = waiting_users.get(user_id, {})
         old_target = old_data.get("target") if isinstance(old_data, dict) else None
         
@@ -544,7 +534,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
             await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         
-        # Сохраняем данные партнёра ДО удаления
         partner_id = find_partner(user_id, old_target, gender)
         partner_target = None
         if partner_id and partner_id in waiting_users:
@@ -675,6 +664,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ban_user(target_id, "Жалоба от пользователя", days)
         reason_text = f"на {days} дн." if days else "навсегда"
         await query.edit_message_text(f"⛔ Пользователь <code>{target_id}</code> забанен ({reason_text}).", parse_mode="HTML")
+        try:
+            await context.bot.send_message(target_id, f"🚫 Вы заблокированы ({reason_text}) за нарушение правил.")
+        except:
+            pass
         partner_id = active_chats.pop(target_id, None)
         if partner_id:
             active_chats.pop(partner_id, None)
@@ -710,6 +703,11 @@ async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     ban_user(target, "Бан от администратора", days)
     await update.message.reply_text(f"⛔ Пользователь <code>{target}</code> забанен ({reason_text}).", parse_mode="HTML")
+    # Отправляем уведомление забаненному
+    try:
+        await context.bot.send_message(target, f"🚫 Вы заблокированы ({reason_text}) администратором.")
+    except:
+        pass
     partner_id = active_chats.pop(target, None)
     if partner_id:
         active_chats.pop(partner_id, None)
@@ -728,6 +726,11 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = int(context.args[0])
         unban_user(target)
         await update.message.reply_text(f"✅ Пользователь {target} разбанен.")
+        # Отправляем уведомление разбаненному
+        try:
+            await context.bot.send_message(target, "✅ Вы были разблокированы администратором. Можете снова пользоваться ботом.")
+        except:
+            pass
     except:
         await update.message.reply_text("Неверный ID.")
 
