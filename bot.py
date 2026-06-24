@@ -207,10 +207,7 @@ def take_premium(user_id: int):
 def find_partner(user_id: int, target_gender: str | None, my_gender: str | None = None):
     """
     Ищет партнёра среди waiting_users.
-    - Если target_gender указан (Premium-поиск), ищет строго по полу.
-    - Если target_gender=None (случайный поиск), ищет любого, НО:
-      если кандидат ищет конкретный пол, его пол должен совпадать с моим полом.
-      Это предотвращает ситуацию когда случайный пользователь "перехватывает" того кто ждёт конкретный пол.
+    Возвращает partner_id или None.
     """
     candidates = []
     for uid, data in waiting_users.items():
@@ -218,22 +215,18 @@ def find_partner(user_id: int, target_gender: str | None, my_gender: str | None 
             continue
         
         if target_gender:
-            # Premium-поиск: ищем строго по запрошенному полу
             if data["gender"] == target_gender:
                 candidates.append(uid)
         else:
-            # Случайный поиск
             if data["target"] is None:
-                # Кандидат тоже ищет случайно — подходит
                 candidates.append(uid)
             else:
-                # Кандидат ищет конкретный пол. Проверяем что мой пол ему подходит
                 if my_gender and data["target"] == my_gender:
                     candidates.append(uid)
     
     if candidates:
         partner_id = random.choice(candidates)
-        del waiting_users[partner_id]
+        # Не удаляем здесь, удаляем снаружи после сохранения данных
         return partner_id
     return None
 
@@ -434,6 +427,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
 
+    # ====== ПОИСК ПО КНОПКАМ ======
     if text in ["🔀 Случайный", "🙎‍♀️", "🙎‍♂️"]:
         gender = get_gender(user_id)
         if gender is None:
@@ -456,19 +450,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "🙎‍♂️":
             target_gender = "male"
 
+        # Сохраняем данные партнёра ДО удаления из waiting_users
         partner_id = find_partner(user_id, target_gender, gender)
+        partner_target = None
+        if partner_id and partner_id in waiting_users:
+            partner_target = waiting_users[partner_id].get("target")
+            del waiting_users[partner_id]
 
         if partner_id:
-            # Проверяем, искал ли партнёр конкретный пол
-            partner_data = waiting_users.get(partner_id, {})
-            partner_target = partner_data.get("target") if isinstance(partner_data, dict) else None
-            
             active_chats[user_id] = partner_id
             active_chats[partner_id] = user_id
             chat_history[user_id] = []
             chat_history[partner_id] = []
 
-            # Сообщение для ищущего (того кто нажал кнопку)
+            # Сообщение для ищущего
             if target_gender == "female":
                 my_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
             elif target_gender == "male":
@@ -476,7 +471,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 my_msg = "🔎🤖 Нашли кое-кого для тебя!\n\nПриятного общения!\n/stop — остановить диалог"
 
-            # Сообщение для найденного (партнёра)
+            # Сообщение для найденного
             if partner_target == "female":
                 partner_msg = "🔎🤖 Найдена девушка!\n\nПриятного общения!\n/stop — остановить диалог"
             elif partner_target == "male":
@@ -495,6 +490,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("🔍 Поиск собеседника...\n🤖 /stop — остановить поиск")
         return
 
+    # ====== СТОП ======
     if text == "⏹ Стоп":
         partner_id = active_chats.pop(user_id, None)
         if partner_id:
@@ -517,6 +513,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🤖 Поиск остановлен\n/search — начать поиск собеседника", reply_markup=kb)
         return
 
+    # ====== СЛЕДУЮЩИЙ ======
     if text == "⏭ Следующий":
         gender = get_gender(user_id)
         if gender is None:
@@ -530,7 +527,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
             return
         
-        # Сохраняем target_gender перед удалением из waiting_users
+        # Сохраняем старый target_gender перед удалением
         old_data = waiting_users.get(user_id, {})
         old_target = old_data.get("target") if isinstance(old_data, dict) else None
         
@@ -547,11 +544,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(partner_id, "/search — начать поиск собеседника", reply_markup=kb)
             await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
         
+        # Сохраняем данные партнёра ДО удаления
         partner_id = find_partner(user_id, old_target, gender)
+        partner_target = None
+        if partner_id and partner_id in waiting_users:
+            partner_target = waiting_users[partner_id].get("target")
+            del waiting_users[partner_id]
+        
         if partner_id:
-            partner_data = waiting_users.get(partner_id, {})
-            partner_target = partner_data.get("target") if isinstance(partner_data, dict) else None
-            
             active_chats[user_id] = partner_id
             active_chats[partner_id] = user_id
             chat_history[user_id] = []
@@ -768,6 +768,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     partner_id = find_partner(user_id, None, gender)
     if partner_id:
+        if partner_id in waiting_users:
+            del waiting_users[partner_id]
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
         chat_history[user_id] = []
@@ -809,6 +811,8 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🤖 Собеседник завершил связь", reply_markup=report_keyboard())
     partner_id = find_partner(user_id, None, gender)
     if partner_id:
+        if partner_id in waiting_users:
+            del waiting_users[partner_id]
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
         chat_history[user_id] = []
