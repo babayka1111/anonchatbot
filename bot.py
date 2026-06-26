@@ -670,7 +670,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if partner_id:
             active_chats.pop(partner_id, None)
             if user_id in chat_history and partner_id in chat_history:
-                combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+                combined_raw = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+                combined_raw.sort(key=lambda x: x[0])
+                combined = [msg for _, msg in combined_raw]
                 pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
             chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
@@ -707,7 +709,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if partner_id:
             active_chats.pop(partner_id, None)
             if user_id in chat_history and partner_id in chat_history:
-                combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+                combined_raw = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+                combined_raw.sort(key=lambda x: x[0])
+                combined = [msg for _, msg in combined_raw]
                 pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
             chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
@@ -764,23 +768,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in chat_history:
         chat_history[user_id] = []
 
-    # Сохраняем в историю с пометкой типа контента
+    # Сохраняем в историю с временной меткой
+    timestamp = datetime.now().strftime("%H:%M:%S")
     if update.message.sticker:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [стикер]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [стикер]"))
     elif update.message.photo:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [фото]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [фото]"))
     elif update.message.video:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [видео]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [видео]"))
     elif update.message.voice:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [голосовое]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [голосовое]"))
     elif update.message.video_note:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [кружок]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [кружок]"))
     elif update.message.document:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [документ]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [документ]"))
     elif update.message.animation:
-        chat_history[user_id].append(f"<code>{user_id}</code>: [гифка]")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: [гифка]"))
     elif update.message.text:
-        chat_history[user_id].append(f"<code>{user_id}</code>: {update.message.text}")
+        chat_history[user_id].append((timestamp, f"<code>{user_id}</code>: {update.message.text}"))
 
     # Определяем ID сообщения для reply
     reply_to_message_id = None
@@ -841,13 +846,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info = pending_reports[report_id]
             msgs = info["messages"]
             text = f"📋 <b>Полный диалог:</b>\n\n"
-            text += "\n".join(msgs) if msgs else "Нет сообщений"
+            full_text = text + "\n".join(msgs) if msgs else text + "Нет сообщений"
             # Разбиваем на части если слишком длинное
-            if len(text) > 4000:
-                for i in range(0, len(text), 4000):
-                    await context.bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="HTML")
+            if len(full_text) > 4000:
+                for i in range(0, len(full_text), 4000):
+                    await context.bot.send_message(ADMIN_ID, full_text[i:i+4000], parse_mode="HTML")
             else:
-                await context.bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+                await context.bot.send_message(ADMIN_ID, full_text, parse_mode="HTML")
             await query.edit_message_text("✅ Полный диалог отправлен.")
         else:
             await query.edit_message_text("⚠️ Диалог уже не доступен.")
@@ -1078,7 +1083,9 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if partner_id:
         active_chats.pop(partner_id, None)
         if user_id in chat_history and partner_id in chat_history:
-            combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            combined_raw = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            combined_raw.sort(key=lambda x: x[0])
+            combined = [msg for _, msg in combined_raw]
             pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
         chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
@@ -1107,7 +1114,9 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if partner_id:
         active_chats.pop(partner_id, None)
         if user_id in chat_history and partner_id in chat_history:
-            combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            combined_raw = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
+            combined_raw.sort(key=lambda x: x[0])
+            combined = [msg for _, msg in combined_raw]
             pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
         chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
