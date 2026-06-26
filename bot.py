@@ -530,6 +530,38 @@ async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     take_premium(target)
     await update.message.reply_text(f"❌ Premium забран у пользователя <code>{target}</code>.", parse_mode="HTML")
 
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику бота (только для админа)."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    
+    # Всего пользователей (кто хоть раз нажал /start)
+    c.execute("SELECT COUNT(*) FROM genders")
+    total_users = c.fetchone()[0]
+    
+    # Пользователей с Premium
+    c.execute("SELECT COUNT(*) FROM premium WHERE premium_until > ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
+    premium_users = c.fetchone()[0]
+    
+    # Забаненных
+    c.execute("SELECT COUNT(*) FROM bans WHERE banned_until = 'forever' OR banned_until > ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
+    banned_count = c.fetchone()[0]
+    
+    conn.close()
+    
+    text = (
+        "📊 <b>Статистика бота</b>\n\n"
+        f"👥 Всего пользователей: {total_users}\n"
+        f"💎 Premium-пользователей: {premium_users}\n"
+        f"🔍 В поиске сейчас: {len(waiting_users)}\n"
+        f"💬 В диалоге сейчас: {len(active_chats) // 2}\n"
+        f"🚫 Забанено: {banned_count}"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -1045,6 +1077,7 @@ def main():
     app.add_handler(CommandHandler("prem", prem_cmd))
     app.add_handler(CommandHandler("giveprem", giveprem_cmd))
     app.add_handler(CommandHandler("takeprem", takeprem_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop_chat))
