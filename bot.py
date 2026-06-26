@@ -530,69 +530,6 @@ async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     take_premium(target)
     await update.message.reply_text(f"❌ Premium забран у пользователя <code>{target}</code>.", parse_mode="HTML")
 
-# ===== ТЕСТОВЫЕ КОМАНДЫ (только для ADMIN_ID) =====
-
-async def testref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Имитирует набор 5 рефералов."""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    user_id = update.effective_user.id
-    if context.args:
-        try:
-            user_id = int(context.args[0])
-        except:
-            await update.message.reply_text("Неверный ID.")
-            return
-    
-    conn = sqlite3.connect("bot.db")
-    c = conn.cursor()
-    for i in range(REFERRALS_NEEDED):
-        fake_id = 100000 + i
-        c.execute("INSERT OR REPLACE INTO referrals (user_id, referral_id, registered_at, counted) VALUES (?, ?, ?, 1)",
-                  (user_id, fake_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-    
-    check_premium(user_id, context)
-
-async def testprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Имитирует покупку Premium через Stars."""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    user_id = update.effective_user.id
-    days = 7
-    if context.args:
-        try:
-            user_id = int(context.args[0])
-            if len(context.args) > 1:
-                days = int(context.args[1])
-        except:
-            await update.message.reply_text("Неверный ID или дни.")
-            return
-    
-    was_active = give_premium(user_id, days)
-    try:
-        if was_active:
-            await context.bot.send_message(user_id, f"✅ Оплата прошла! Premium продлён на {days} дн.\nНапишите /start для обновления клавиатуры.")
-        else:
-            await context.bot.send_message(user_id, f"✅ Оплата прошла! Premium активен на {days} дн.\nНапишите /start для обновления клавиатуры.")
-    except:
-        pass
-
-async def testexpire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Имитирует истечение Premium."""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    user_id = update.effective_user.id
-    if context.args:
-        try:
-            user_id = int(context.args[0])
-        except:
-            await update.message.reply_text("Неверный ID.")
-            return
-    
-    take_premium(user_id)
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -1108,9 +1045,6 @@ def main():
     app.add_handler(CommandHandler("prem", prem_cmd))
     app.add_handler(CommandHandler("giveprem", giveprem_cmd))
     app.add_handler(CommandHandler("takeprem", takeprem_cmd))
-    app.add_handler(CommandHandler("testref", testref_cmd))
-    app.add_handler(CommandHandler("testprem", testprem_cmd))
-    app.add_handler(CommandHandler("testexpire", testexpire_cmd))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop_chat))
