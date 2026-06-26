@@ -7,6 +7,7 @@ import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import random
+import asyncio
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 7421345767
@@ -558,6 +559,37 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
+async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылка сообщения всем пользователям (только админ)."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Использование: /broadcast [текст сообщения]")
+        return
+    
+    text = " ".join(context.args)
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM genders")
+    users = c.fetchall()
+    conn.close()
+    
+    sent = 0
+    failed = 0
+    
+    await update.message.reply_text(f"📢 Начинаю рассылку на {len(users)} пользователей...")
+    
+    for (user_id,) in users:
+        try:
+            await context.bot.send_message(user_id, f"📢 {text}")
+            sent += 1
+            await asyncio.sleep(0.3)  # Защита от спам-блокировки
+        except:
+            failed += 1
+    
+    await update.message.reply_text(f"✅ Рассылка завершена.\nОтправлено: {sent}\nНе доставлено: {failed}")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -1074,6 +1106,7 @@ def main():
     app.add_handler(CommandHandler("giveprem", giveprem_cmd))
     app.add_handler(CommandHandler("takeprem", takeprem_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("broadcast", broadcast_cmd))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop_chat))
