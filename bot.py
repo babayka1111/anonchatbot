@@ -560,7 +560,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Рассылка сообщения всем пользователям (только админ)."""
     if update.effective_user.id != ADMIN_ID:
         return
     
@@ -584,7 +583,7 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(user_id, f"📢 {text}")
             sent += 1
-            await asyncio.sleep(0.3)  # Защита от спам-блокировки
+            await asyncio.sleep(0.3)
         except:
             failed += 1
     
@@ -762,22 +761,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_history[user_id] = []
     chat_history[user_id].append(f"<code>{user_id}</code>: {update.message.text or '[медиа]'}")
 
+    # Пересылаем сообщение с учётом reply
+    if update.message.reply_to_message:
+        # Сообщение является ответом на другое сообщение
+        reply_text = update.message.reply_to_message.text or update.message.reply_to_message.caption or "[медиа]"
+        reply_preview = reply_text[:50] + "..." if len(reply_text) > 50 else reply_text
+        header = f"↪️ <i>Ответ на: «{reply_preview}»</i>\n\n"
+    else:
+        header = ""
+
     if update.message.sticker:
+        if header:
+            await context.bot.send_message(partner_id, header, parse_mode="HTML")
         await context.bot.send_sticker(partner_id, update.message.sticker.file_id)
     elif update.message.photo:
-        await context.bot.send_photo(partner_id, update.message.photo[-1].file_id, caption=update.message.caption)
+        caption = (header + (update.message.caption or "")) if header else update.message.caption
+        await context.bot.send_photo(partner_id, update.message.photo[-1].file_id, caption=caption)
     elif update.message.video:
-        await context.bot.send_video(partner_id, update.message.video.file_id, caption=update.message.caption)
+        caption = (header + (update.message.caption or "")) if header else update.message.caption
+        await context.bot.send_video(partner_id, update.message.video.file_id, caption=caption)
     elif update.message.voice:
+        if header:
+            await context.bot.send_message(partner_id, header, parse_mode="HTML")
         await context.bot.send_voice(partner_id, update.message.voice.file_id)
     elif update.message.video_note:
+        if header:
+            await context.bot.send_message(partner_id, header, parse_mode="HTML")
         await context.bot.send_video_note(partner_id, update.message.video_note.file_id)
     elif update.message.document:
-        await context.bot.send_document(partner_id, update.message.document.file_id, caption=update.message.caption)
+        caption = (header + (update.message.caption or "")) if header else update.message.caption
+        await context.bot.send_document(partner_id, update.message.document.file_id, caption=caption)
     elif update.message.animation:
-        await context.bot.send_animation(partner_id, update.message.animation.file_id, caption=update.message.caption)
+        caption = (header + (update.message.caption or "")) if header else update.message.caption
+        await context.bot.send_animation(partner_id, update.message.animation.file_id, caption=caption)
     elif update.message.text:
-        await context.bot.send_message(partner_id, update.message.text)
+        await context.bot.send_message(partner_id, header + update.message.text, parse_mode="HTML")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
