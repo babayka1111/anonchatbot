@@ -1,15 +1,16 @@
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes, PreCheckoutQueryHandler
-import sqlite3
-from datetime import datetime, timedelta
+import psycopg2
 import os
 import uuid
+from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import random
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 7421345767
+DATABASE_URL = "postgresql://postgres.fmwrhanecpwcbmvrbooh:194713120Iv201027@aws-1-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
 PORT = int(os.environ.get("PORT", 10000))
 CHOOSING_GENDER = 0
 REFERRALS_NEEDED = 5
@@ -39,37 +40,41 @@ PREMIUM_PRICES = {
     "30days": {"stars": 200, "days": 30, "title": "30 дней"},
 }
 
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS bans (user_id INTEGER PRIMARY KEY, reason TEXT, banned_until TEXT, banned_at TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS referrals (user_id INTEGER, referral_id INTEGER, registered_at TEXT, counted INTEGER DEFAULT 0)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS premium (user_id INTEGER PRIMARY KEY, premium_until TEXT, activated_at TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS genders (user_id INTEGER PRIMARY KEY, gender TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ref_codes (user_id INTEGER PRIMARY KEY, code TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS bans (user_id BIGINT PRIMARY KEY, reason TEXT, banned_until TEXT, banned_at TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS referrals (user_id BIGINT, referral_id BIGINT, registered_at TEXT, counted INTEGER DEFAULT 0)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS premium (user_id BIGINT PRIMARY KEY, premium_until TEXT, activated_at TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS genders (user_id BIGINT PRIMARY KEY, gender TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ref_codes (user_id BIGINT PRIMARY KEY, code TEXT)""")
     conn.commit()
     conn.close()
 
 def ban_user(user_id: int, reason: str, days: int = None):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
     banned_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     banned_until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S") if days else "forever"
-    c.execute("INSERT OR REPLACE INTO bans VALUES (?, ?, ?, ?)", (user_id, reason, banned_until, banned_at))
+    c.execute("INSERT INTO bans VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET reason=%s, banned_until=%s, banned_at=%s",
+              (user_id, reason, banned_until, banned_at, reason, banned_until, banned_at))
     conn.commit()
     conn.close()
 
 def unban_user(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("DELETE FROM bans WHERE user_id = ?", (user_id,))
+    c.execute("DELETE FROM bans WHERE user_id = %s", (user_id,))
     conn.commit()
     conn.close()
 
 def is_banned(user_id: int) -> tuple:
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT reason, banned_until FROM bans WHERE user_id = ?", (user_id,))
+    c.execute("SELECT reason, banned_until FROM bans WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -83,28 +88,28 @@ def is_banned(user_id: int) -> tuple:
     return True, f"до {banned_until}"
 
 def get_gender(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT gender FROM genders WHERE user_id = ?", (user_id,))
+    c.execute("SELECT gender FROM genders WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     conn.close()
     return row[0] if row else None
 
 def set_gender(user_id: int, gender: str):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO genders VALUES (?, ?)", (user_id, gender))
+    c.execute("INSERT INTO genders VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET gender = %s", (user_id, gender, gender))
     conn.commit()
     conn.close()
 
 def get_ref_code(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT code FROM ref_codes WHERE user_id = ?", (user_id,))
+    c.execute("SELECT code FROM ref_codes WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     if not row:
         code = str(uuid.uuid4())[:8]
-        c.execute("INSERT OR REPLACE INTO ref_codes VALUES (?, ?)", (user_id, code))
+        c.execute("INSERT INTO ref_codes VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING", (user_id, code))
         conn.commit()
         conn.close()
         return code
@@ -112,35 +117,35 @@ def get_ref_code(user_id: int):
     return row[0]
 
 def get_referral_count(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM referrals WHERE user_id = ? AND counted = 1", (user_id,))
+    c.execute("SELECT COUNT(*) FROM referrals WHERE user_id = %s AND counted = 1", (user_id,))
     count = c.fetchone()[0]
     conn.close()
     return count
 
 def add_referral(user_id: int, referral_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM referrals WHERE referral_id = ?", (referral_id,))
+    c.execute("SELECT COUNT(*) FROM referrals WHERE referral_id = %s", (referral_id,))
     if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO referrals (user_id, referral_id, registered_at) VALUES (?, ?, ?)", 
+        c.execute("INSERT INTO referrals (user_id, referral_id, registered_at) VALUES (%s, %s, %s)", 
                   (user_id, referral_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
 
 def reset_referrals(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("UPDATE referrals SET counted = 0 WHERE user_id = ?", (user_id,))
+    c.execute("UPDATE referrals SET counted = 0 WHERE user_id = %s", (user_id,))
     conn.commit()
     conn.close()
 
 def count_referral(referral_id: int, context=None):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("UPDATE referrals SET counted = 1 WHERE referral_id = ? AND counted = 0", (referral_id,))
-    c.execute("SELECT user_id FROM referrals WHERE referral_id = ?", (referral_id,))
+    c.execute("UPDATE referrals SET counted = 1 WHERE referral_id = %s AND counted = 0", (referral_id,))
+    c.execute("SELECT user_id FROM referrals WHERE referral_id = %s", (referral_id,))
     row = c.fetchone()
     conn.commit()
     conn.close()
@@ -158,9 +163,9 @@ def count_referral(referral_id: int, context=None):
 def check_premium(user_id: int, context=None):
     count = get_referral_count(user_id)
     if count >= REFERRALS_NEEDED:
-        conn = sqlite3.connect("bot.db")
+        conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
+        c.execute("SELECT premium_until FROM premium WHERE user_id = %s", (user_id,))
         row = c.fetchone()
         now = datetime.now()
         
@@ -173,8 +178,8 @@ def check_premium(user_id: int, context=None):
             was_active = False
         
         premium_until = new_until.strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
-                  (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
+        c.execute("INSERT INTO premium VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET premium_until = %s, activated_at = %s",
+                  (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S"), premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         conn.close()
         
@@ -199,9 +204,9 @@ def check_premium(user_id: int, context=None):
     return False
 
 def has_premium(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
+    c.execute("SELECT premium_until FROM premium WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -211,9 +216,9 @@ def has_premium(user_id: int):
     return True
 
 def get_premium_info(user_id: int, context=None):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT premium_until, activated_at FROM premium WHERE user_id = ?", (user_id,))
+    c.execute("SELECT premium_until, activated_at FROM premium WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -238,9 +243,9 @@ def get_premium_info(user_id: int, context=None):
     return remaining, passed
 
 def give_premium(user_id: int, days: int = 7):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
+    c.execute("SELECT premium_until FROM premium WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     now = datetime.now()
     
@@ -253,17 +258,17 @@ def give_premium(user_id: int, days: int = 7):
         was_active = False
     
     premium_until = new_until.strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
-              (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
+    c.execute("INSERT INTO premium VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET premium_until = %s, activated_at = %s",
+              (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S"), premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
     expired_notified.discard(user_id)
     return was_active
 
 def take_premium(user_id: int):
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
-    c.execute("DELETE FROM premium WHERE user_id = ?", (user_id,))
+    c.execute("DELETE FROM premium WHERE user_id = %s", (user_id,))
     conn.commit()
     conn.close()
 
@@ -368,9 +373,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if args:
         ref_code = args[0]
-        conn = sqlite3.connect("bot.db")
+        conn = get_db()
         c = conn.cursor()
-        c.execute("SELECT user_id FROM ref_codes WHERE code = ?", (ref_code,))
+        c.execute("SELECT user_id FROM ref_codes WHERE code = %s", (ref_code,))
         row = c.fetchone()
         conn.close()
         if row and row[0] != user_id:
@@ -531,23 +536,19 @@ async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"❌ Premium забран у пользователя <code>{target}</code>.", parse_mode="HTML")
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику бота (только для админа)."""
     if update.effective_user.id != ADMIN_ID:
         return
     
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
     
-    # Всего пользователей (кто хоть раз нажал /start)
     c.execute("SELECT COUNT(*) FROM genders")
     total_users = c.fetchone()[0]
     
-    # Пользователей с Premium
-    c.execute("SELECT COUNT(*) FROM premium WHERE premium_until > ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
+    c.execute("SELECT COUNT(*) FROM premium WHERE premium_until > %s", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
     premium_users = c.fetchone()[0]
     
-    # Забаненных
-    c.execute("SELECT COUNT(*) FROM bans WHERE banned_until = 'forever' OR banned_until > ?", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
+    c.execute("SELECT COUNT(*) FROM bans WHERE banned_until = 'forever' OR banned_until > %s", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),))
     banned_count = c.fetchone()[0]
     
     conn.close()
@@ -926,7 +927,7 @@ async def unban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def banlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    conn = sqlite3.connect("bot.db")
+    conn = get_db()
     c = conn.cursor()
     c.execute("SELECT user_id, reason, banned_until FROM bans")
     rows = c.fetchall()
