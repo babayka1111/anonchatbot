@@ -33,6 +33,8 @@ active_chats = {}
 chat_history = {}
 pending_reports = {}
 expired_notified = set()
+# Храним соответствие message_id отправителя к message_id получателя
+message_map = {}
 
 PREMIUM_PRICES = {
     "1day": {"stars": 15, "days": 1, "title": "1 день"},
@@ -761,42 +763,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_history[user_id] = []
     chat_history[user_id].append(f"<code>{user_id}</code>: {update.message.text or '[медиа]'}")
 
-    # Пересылаем сообщение с учётом reply
+    # Определяем ID сообщения для reply
+    reply_to_message_id = None
     if update.message.reply_to_message:
-        reply_msg = update.message.reply_to_message
-        if reply_msg.sticker:
-            await context.bot.send_sticker(partner_id, reply_msg.sticker.file_id)
-        elif reply_msg.photo:
-            await context.bot.send_photo(partner_id, reply_msg.photo[-1].file_id, caption=reply_msg.caption)
-        elif reply_msg.video:
-            await context.bot.send_video(partner_id, reply_msg.video.file_id, caption=reply_msg.caption)
-        elif reply_msg.voice:
-            await context.bot.send_voice(partner_id, reply_msg.voice.file_id)
-        elif reply_msg.video_note:
-            await context.bot.send_video_note(partner_id, reply_msg.video_note.file_id)
-        elif reply_msg.document:
-            await context.bot.send_document(partner_id, reply_msg.document.file_id, caption=reply_msg.caption)
-        elif reply_msg.animation:
-            await context.bot.send_animation(partner_id, reply_msg.animation.file_id, caption=reply_msg.caption)
-        elif reply_msg.text:
-            await context.bot.send_message(partner_id, reply_msg.text)
+        # Ищем в мапе сообщение партнёра, соответствующее цитируемому сообщению
+        reply_to_message_id = message_map.get((user_id, update.message.reply_to_message.message_id))
 
+    # Отправляем сообщение партнёру
+    sent_msg = None
     if update.message.sticker:
-        await context.bot.send_sticker(partner_id, update.message.sticker.file_id)
+        sent_msg = await context.bot.send_sticker(partner_id, update.message.sticker.file_id, reply_to_message_id=reply_to_message_id)
     elif update.message.photo:
-        await context.bot.send_photo(partner_id, update.message.photo[-1].file_id, caption=update.message.caption)
+        sent_msg = await context.bot.send_photo(partner_id, update.message.photo[-1].file_id, caption=update.message.caption, reply_to_message_id=reply_to_message_id)
     elif update.message.video:
-        await context.bot.send_video(partner_id, update.message.video.file_id, caption=update.message.caption)
+        sent_msg = await context.bot.send_video(partner_id, update.message.video.file_id, caption=update.message.caption, reply_to_message_id=reply_to_message_id)
     elif update.message.voice:
-        await context.bot.send_voice(partner_id, update.message.voice.file_id)
+        sent_msg = await context.bot.send_voice(partner_id, update.message.voice.file_id, reply_to_message_id=reply_to_message_id)
     elif update.message.video_note:
-        await context.bot.send_video_note(partner_id, update.message.video_note.file_id)
+        sent_msg = await context.bot.send_video_note(partner_id, update.message.video_note.file_id, reply_to_message_id=reply_to_message_id)
     elif update.message.document:
-        await context.bot.send_document(partner_id, update.message.document.file_id, caption=update.message.caption)
+        sent_msg = await context.bot.send_document(partner_id, update.message.document.file_id, caption=update.message.caption, reply_to_message_id=reply_to_message_id)
     elif update.message.animation:
-        await context.bot.send_animation(partner_id, update.message.animation.file_id, caption=update.message.caption)
+        sent_msg = await context.bot.send_animation(partner_id, update.message.animation.file_id, caption=update.message.caption, reply_to_message_id=reply_to_message_id)
     elif update.message.text:
-        await context.bot.send_message(partner_id, update.message.text)
+        sent_msg = await context.bot.send_message(partner_id, update.message.text, reply_to_message_id=reply_to_message_id)
+
+    # Сохраняем связь message_id отправителя и получателя для будущих reply
+    if sent_msg:
+        message_map[(partner_id, sent_msg.message_id)] = update.message.message_id
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
