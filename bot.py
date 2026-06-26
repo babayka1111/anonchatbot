@@ -33,7 +33,6 @@ active_chats = {}
 chat_history = {}
 pending_reports = {}
 expired_notified = set()
-# Храним соответствие message_id отправителя к message_id получателя
 message_map = {}
 
 PREMIUM_PRICES = {
@@ -321,14 +320,17 @@ def gender_keyboard():
 def report_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⚠️ Пожаловаться", callback_data="report")]])
 
-def admin_ban_keyboard(user_id: int):
-    return InlineKeyboardMarkup([
+def admin_ban_keyboard(user_id: int, report_id: str = ""):
+    keyboard = [
         [InlineKeyboardButton("⛔ Бан на 1 день", callback_data=f"ban_{user_id}_1")],
         [InlineKeyboardButton("⛔ Бан на 7 дней", callback_data=f"ban_{user_id}_7")],
         [InlineKeyboardButton("⛔ Бан на 30 дней", callback_data=f"ban_{user_id}_30")],
         [InlineKeyboardButton("♾ Вечный бан", callback_data=f"ban_{user_id}_0")],
         [InlineKeyboardButton("✅ Отклонить", callback_data=f"ban_{user_id}_no")],
-    ])
+    ]
+    if report_id:
+        keyboard.append([InlineKeyboardButton("📋 Весь диалог", callback_data=f"fulldialog_{report_id}")])
+    return InlineKeyboardMarkup(keyboard)
 
 def premium_menu_keyboard():
     keyboard = []
@@ -669,7 +671,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_chats.pop(partner_id, None)
             if user_id in chat_history and partner_id in chat_history:
                 combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
-                pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+                pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
             chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
             kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
@@ -706,7 +708,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_chats.pop(partner_id, None)
             if user_id in chat_history and partner_id in chat_history:
                 combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
-                pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+                pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
             chat_history.pop(user_id, None)
             chat_history.pop(partner_id, None)
             kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
@@ -761,12 +763,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id not in chat_history:
         chat_history[user_id] = []
-    chat_history[user_id].append(f"<code>{user_id}</code>: {update.message.text or '[медиа]'}")
+
+    # Сохраняем в историю с пометкой типа контента
+    if update.message.sticker:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [стикер]")
+    elif update.message.photo:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [фото]")
+    elif update.message.video:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [видео]")
+    elif update.message.voice:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [голосовое]")
+    elif update.message.video_note:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [кружок]")
+    elif update.message.document:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [документ]")
+    elif update.message.animation:
+        chat_history[user_id].append(f"<code>{user_id}</code>: [гифка]")
+    elif update.message.text:
+        chat_history[user_id].append(f"<code>{user_id}</code>: {update.message.text}")
 
     # Определяем ID сообщения для reply
     reply_to_message_id = None
     if update.message.reply_to_message:
-        # Ищем в мапе сообщение партнёра, соответствующее цитируемому сообщению
         reply_to_message_id = message_map.get((user_id, update.message.reply_to_message.message_id))
 
     # Отправляем сообщение партнёру
@@ -788,7 +806,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.text:
         sent_msg = await context.bot.send_message(partner_id, update.message.text, reply_to_message_id=reply_to_message_id)
 
-    # Сохраняем связь message_id отправителя и получателя для будущих reply
+    # Сохраняем связь message_id для будущих reply
     if sent_msg:
         message_map[(partner_id, sent_msg.message_id)] = update.message.message_id
 
@@ -812,6 +830,27 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 prices=[LabeledPrice(f"Premium {price_data['title']}", price_data['stars'])],
                 start_parameter="premium"
             )
+        return
+
+    if data.startswith("fulldialog_"):
+        if user_id != ADMIN_ID:
+            await query.edit_message_text("⛔ Только администратор может это делать.")
+            return
+        report_id = data.replace("fulldialog_", "")
+        if report_id in pending_reports:
+            info = pending_reports[report_id]
+            msgs = info["messages"]
+            text = f"📋 <b>Полный диалог:</b>\n\n"
+            text += "\n".join(msgs) if msgs else "Нет сообщений"
+            # Разбиваем на части если слишком длинное
+            if len(text) > 4000:
+                for i in range(0, len(text), 4000):
+                    await context.bot.send_message(ADMIN_ID, text[i:i+4000], parse_mode="HTML")
+            else:
+                await context.bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+            await query.edit_message_text("✅ Полный диалог отправлен.")
+        else:
+            await query.edit_message_text("⚠️ Диалог уже не доступен.")
         return
 
     if data in ["gender_male", "gender_female"]:
@@ -842,15 +881,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 found = rid
                 break
         if found:
-            info = pending_reports.pop(found)
+            info = pending_reports[found]
             other_user = info["user2"] if user_id == info["user1"] else info["user1"]
-            msgs = "\n".join(info["messages"][-15:]) if info["messages"] else "Нет сообщений"
+            msgs = info["messages"]
+            # Показываем последние 20 строк
+            msg_text = "\n".join(msgs[-20:]) if msgs else "Нет сообщений"
             await context.bot.send_message(
                 ADMIN_ID,
                 f"🚩 <b>Жалоба на пользователя</b> <code>{other_user}</code>\n\n"
-                f"<b>Диалог:</b>\n{msgs}\n\nВыберите действие:",
+                f"<b>Диалог (последние 20 сообщений):</b>\n{msg_text}\n\n"
+                f"Выберите действие:",
                 parse_mode="HTML",
-                reply_markup=admin_ban_keyboard(other_user)
+                reply_markup=admin_ban_keyboard(other_user, found)
             )
             await query.edit_message_text("✅ Жалоба отправлена администратору. Спасибо!")
         else:
@@ -1037,7 +1079,7 @@ async def next_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_chats.pop(partner_id, None)
         if user_id in chat_history and partner_id in chat_history:
             combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
-            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
         chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
         kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
@@ -1066,7 +1108,7 @@ async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_chats.pop(partner_id, None)
         if user_id in chat_history and partner_id in chat_history:
             combined = chat_history.get(user_id, []) + chat_history.get(partner_id, [])
-            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined[-20:], "user1": user_id, "user2": partner_id}
+            pending_reports[f"{user_id}_{partner_id}"] = {"messages": combined, "user1": user_id, "user2": partner_id}
         chat_history.pop(user_id, None)
         chat_history.pop(partner_id, None)
         kb = premium_keyboard() if has_premium(partner_id) else main_keyboard()
@@ -1128,7 +1170,7 @@ def main():
     app.add_handler(CommandHandler("banlist", banlist_cmd))
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(buy_|report|ban_|gender_).*"))
+    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(buy_|fulldialog_|report|ban_|gender_).*"))
     app.add_handler(MessageHandler(
         filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
         filters.Sticker.ALL | filters.Document.ALL | filters.VIDEO_NOTE |
