@@ -156,7 +156,6 @@ def count_referral(referral_id: int, context=None):
                 pass
 
 def check_premium(user_id: int, context=None):
-    """При наборе 5 рефералов всегда выдаёт или продлевает Premium на 7 дней, затем сбрасывает счётчик."""
     count = get_referral_count(user_id)
     if count >= REFERRALS_NEEDED:
         conn = sqlite3.connect("bot.db")
@@ -166,12 +165,10 @@ def check_premium(user_id: int, context=None):
         now = datetime.now()
         
         if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
-            # Уже есть активный Premium — продлеваем
             current_until = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
             new_until = current_until + timedelta(days=7)
             was_active = True
         else:
-            # Нет активного Premium — выдаём новый
             new_until = now + timedelta(days=7)
             was_active = False
         
@@ -181,7 +178,6 @@ def check_premium(user_id: int, context=None):
         conn.commit()
         conn.close()
         
-        # Сбрасываем счётчик рефералов
         reset_referrals(user_id)
         expired_notified.discard(user_id)
         
@@ -527,6 +523,71 @@ async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     take_premium(target)
     await update.message.reply_text(f"❌ Premium забран у пользователя <code>{target}</code>.", parse_mode="HTML")
+
+# ===== ТЕСТОВЫЕ КОМАНДЫ (только для ADMIN_ID) =====
+
+async def testref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет 5 фейковых рефералов для теста."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    user_id = update.effective_user.id
+    if not context.args:
+        user_id = update.effective_user.id
+    else:
+        try:
+            user_id = int(context.args[0])
+        except:
+            await update.message.reply_text("Неверный ID.")
+            return
+    
+    conn = sqlite3.connect("bot.db")
+    c = conn.cursor()
+    for i in range(REFERRALS_NEEDED):
+        fake_id = 100000 + i
+        c.execute("INSERT OR REPLACE INTO referrals (user_id, referral_id, registered_at, counted) VALUES (?, ?, ?, 1)",
+                  (user_id, fake_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+    
+    check_premium(user_id, context)
+    await update.message.reply_text(f"✅ Добавлено {REFERRALS_NEEDED} фейковых рефералов для пользователя <code>{user_id}</code>.", parse_mode="HTML")
+
+async def testprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Симулирует покупку Premium (без реальной оплаты)."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    user_id = update.effective_user.id
+    days = 7
+    if context.args:
+        try:
+            user_id = int(context.args[0])
+            if len(context.args) > 1:
+                days = int(context.args[1])
+        except:
+            await update.message.reply_text("Неверный ID или дни.")
+            return
+    
+    give_premium(user_id, days)
+    await update.message.reply_text(f"✅ Симилирована покупка Premium на {days} дн. для пользователя <code>{user_id}</code>.", parse_mode="HTML")
+    try:
+        await context.bot.send_message(user_id, f"🎉 Premium активирован на {days} дн. (тестовый режим)\nНапишите /start для обновления клавиатуры")
+    except:
+        pass
+
+async def testexpire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Симулирует истечение Premium."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    user_id = update.effective_user.id
+    if context.args:
+        try:
+            user_id = int(context.args[0])
+        except:
+            await update.message.reply_text("Неверный ID.")
+            return
+    
+    take_premium(user_id)
+    await update.message.reply_text(f"✅ Premium удалён у пользователя <code>{user_id}</code>. Напишите /start для проверки уведомления.", parse_mode="HTML")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1037,6 +1098,9 @@ def main():
     app.add_handler(CommandHandler("prem", prem_cmd))
     app.add_handler(CommandHandler("giveprem", giveprem_cmd))
     app.add_handler(CommandHandler("takeprem", takeprem_cmd))
+    app.add_handler(CommandHandler("testref", testref_cmd))
+    app.add_handler(CommandHandler("testprem", testprem_cmd))
+    app.add_handler(CommandHandler("testexpire", testexpire_cmd))
     app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("next", next_chat))
     app.add_handler(CommandHandler("stop", stop_chat))
