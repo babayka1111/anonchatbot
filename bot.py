@@ -156,6 +156,7 @@ def count_referral(referral_id: int, context=None):
                 pass
 
 def check_premium(user_id: int, context=None):
+    """При наборе 5 рефералов всегда выдаёт или продлевает Premium на 7 дней, затем сбрасывает счётчик."""
     count = get_referral_count(user_id)
     if count >= REFERRALS_NEEDED:
         conn = sqlite3.connect("bot.db")
@@ -163,26 +164,42 @@ def check_premium(user_id: int, context=None):
         c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
         row = c.fetchone()
         now = datetime.now()
-        had_active = False
-        if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
-            had_active = True
         
-        if not had_active:
-            premium_until = (now + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-            c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
-                      (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
-            conn.commit()
-            conn.close()
-            if context:
-                try:
+        if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
+            # Уже есть активный Premium — продлеваем
+            current_until = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+            new_until = current_until + timedelta(days=7)
+            was_active = True
+        else:
+            # Нет активного Premium — выдаём новый
+            new_until = now + timedelta(days=7)
+            was_active = False
+        
+        premium_until = new_until.strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
+                  (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        conn.close()
+        
+        # Сбрасываем счётчик рефералов
+        reset_referrals(user_id)
+        expired_notified.discard(user_id)
+        
+        if context:
+            try:
+                if was_active:
+                    context.bot.send_message(
+                        user_id,
+                        "🎉 5 рефералов! Ваш Premium продлён на 7 дней!\nСчётчик рефералов сброшен. Пригласите ещё 5 чтобы продлить снова."
+                    )
+                else:
                     context.bot.send_message(
                         user_id,
                         "🎉 Поздравляем! Вы получили Premium на 7 дней!\nНапишите /start для обновления клавиатуры"
                     )
-                except:
-                    pass
-            return True
-        conn.close()
+            except:
+                pass
+        return True
     return False
 
 def has_premium(user_id: int):
@@ -321,7 +338,6 @@ def premium_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 async def cancel_gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вызывается когда пользователь игнорирует ПОВТОРНЫЙ выбор пола."""
     user_id = update.effective_user.id
     await update.message.reply_text("Выбор пола отменён.")
     
@@ -990,7 +1006,6 @@ def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Первый выбор пола — ОБЯЗАТЕЛЬНЫЙ (без fallbacks)
     start_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -999,7 +1014,6 @@ def main():
         fallbacks=[],
     )
 
-    # Повторный выбор пола через /settings — НЕОБЯЗАТЕЛЬНЫЙ (с fallbacks)
     settings_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("settings", settings_cmd)],
         states={
