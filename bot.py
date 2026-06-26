@@ -321,14 +321,9 @@ def premium_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 async def cancel_gender_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вызывается когда пользователь игнорирует выбор пола и пишет что-то другое."""
+    """Вызывается когда пользователь игнорирует ПОВТОРНЫЙ выбор пола."""
     user_id = update.effective_user.id
     await update.message.reply_text("Выбор пола отменён.")
-    
-    gender = get_gender(user_id)
-    if gender is None:
-        await update.message.reply_text("Для использования бота нужен пол. Напишите /start чтобы выбрать.")
-        return ConversationHandler.END
     
     kb = premium_keyboard() if has_premium(user_id) else main_keyboard()
     await update.message.reply_text(
@@ -995,8 +990,18 @@ def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start), CommandHandler("settings", settings_cmd)],
+    # Первый выбор пола — ОБЯЗАТЕЛЬНЫЙ (без fallbacks)
+    start_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING_GENDER: [CallbackQueryHandler(gender_callback, pattern="^gender_")],
+        },
+        fallbacks=[],
+    )
+
+    # Повторный выбор пола через /settings — НЕОБЯЗАТЕЛЬНЫЙ (с fallbacks)
+    settings_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("settings", settings_cmd)],
         states={
             CHOOSING_GENDER: [CallbackQueryHandler(gender_callback, pattern="^gender_")],
         },
@@ -1012,7 +1017,8 @@ def main():
         ],
     )
 
-    app.add_handler(conv_handler)
+    app.add_handler(start_conv_handler)
+    app.add_handler(settings_conv_handler)
     app.add_handler(CommandHandler("ref", ref_cmd))
     app.add_handler(CommandHandler("prem", prem_cmd))
     app.add_handler(CommandHandler("giveprem", giveprem_cmd))
