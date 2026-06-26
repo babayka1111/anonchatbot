@@ -1,5 +1,5 @@
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes, PreCheckoutQueryHandler
 import sqlite3
 from datetime import datetime, timedelta
 import os
@@ -32,6 +32,13 @@ active_chats = {}
 chat_history = {}
 pending_reports = {}
 expired_notified = set()
+
+# Цены на Premium
+PREMIUM_PRICES = {
+    "1day": {"stars": 15, "days": 1, "title": "1 день"},
+    "7days": {"stars": 50, "days": 7, "title": "7 дней"},
+    "30days": {"stars": 200, "days": 30, "title": "30 дней"},
+}
 
 def init_db():
     conn = sqlite3.connect("bot.db")
@@ -124,7 +131,6 @@ def add_referral(user_id: int, referral_id: int):
     conn.close()
 
 def reset_referrals(user_id: int):
-    """Сбрасывает счётчик рефералов для пользователя."""
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
     c.execute("UPDATE referrals SET counted = 0 WHERE user_id = ?", (user_id,))
@@ -158,7 +164,6 @@ def check_premium(user_id: int, context=None):
         c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
         row = c.fetchone()
         now = datetime.now()
-        # Проверяем, не было ли уже активной подписки
         had_active = False
         if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
             had_active = True
@@ -169,7 +174,6 @@ def check_premium(user_id: int, context=None):
                       (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
             conn.commit()
             conn.close()
-            # Уведомление о получении Premium
             if context:
                 try:
                     context.bot.send_message(
@@ -206,9 +210,7 @@ def get_premium_info(user_id: int, context=None):
     activated = datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
     now = datetime.now()
     if until < now:
-        # Premium истёк — сбрасываем счётчик рефералов
         reset_referrals(user_id)
-        # Уведомляем один раз
         if user_id not in expired_notified and context:
             expired_notified.add(user_id)
             try:
@@ -224,15 +226,26 @@ def get_premium_info(user_id: int, context=None):
     return remaining, passed
 
 def give_premium(user_id: int, days: int = 7):
+    """Выдаёт Premium на указанное количество дней. Если уже есть активный — продлевает."""
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
+    c.execute("SELECT premium_until FROM premium WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
     now = datetime.now()
-    premium_until = (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    
+    if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
+        # Продлеваем существующую подписку
+        current_until = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        new_until = current_until + timedelta(days=days)
+    else:
+        # Новая подписка
+        new_until = now + timedelta(days=days)
+    
+    premium_until = new_until.strftime("%Y-%m-%d %H:%M:%S")
     c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
               (user_id, premium_until, now.strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
-    # Убираем из списка уведомлённых об истечении
     expired_notified.discard(user_id)
 
 def take_premium(user_id: int):
@@ -268,7 +281,7 @@ async def post_init(application: Application):
         ("next", "Сменить собеседника"),
         ("stop", "Остановить диалог / поиск"),
         ("ref", "Реферальная система"),
-        ("prem", "Статус подписки"),
+        ("prem", "Premium-подписка"),
         ("settings", "Изменить параметры"),
     ])
     init_db()
@@ -301,6 +314,16 @@ def admin_ban_keyboard(user_id: int):
         [InlineKeyboardButton("♾ Вечный бан", callback_data=f"ban_{user_id}_0")],
         [InlineKeyboardButton("✅ Отклонить", callback_data=f"ban_{user_id}_no")],
     ])
+
+def premium_menu_keyboard():
+    """Клавиатура с ценами на Premium."""
+    keyboard = []
+    for key, data in PREMIUM_PRICES.items():
+        keyboard.append([InlineKeyboardButton(
+            f"⭐ {data['stars']} — {data['title']}",
+            callback_data=f"buy_{key}"
+        )])
+    return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -337,7 +360,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🤖 Вы уже ищете собеседника\n/stop — остановить поиск")
         return ConversationHandler.END
 
-    # Проверяем Premium (для уведомления об истечении)
     if not has_premium(user_id):
         get_premium_info(user_id, context)
 
@@ -351,7 +373,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/next — переключить собеседника\n"
         "/stop — завершить диалог\n"
         "/ref — реферальная система\n"
-        "/prem — статус подписки\n"
+        "/prem — Premium-подписка\n"
         "/settings — изменить параметры\n\n"
         "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
@@ -379,7 +401,7 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/next — переключить собеседника\n"
         "/stop — завершить диалог\n"
         "/ref — реферальная система\n"
-        "/prem — статус подписки\n"
+        "/prem — Premium-подписка\n"
         "/settings — изменить параметры\n\n"
         "После каждого диалога вы можете пожаловаться на собеседника",
         reply_markup=kb
@@ -412,16 +434,34 @@ async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     prem_info = get_premium_info(user_id, context)
-    if not prem_info:
-        await update.message.reply_text(f"❌ У вас нет активной подписки.\nПригласите {REFERRALS_NEEDED} друзей через /ref чтобы получить доступ к поиску по полу.")
-        return
-    remaining, passed = prem_info
-    await update.message.reply_text(
-        f"✅ <b>Подписка активна!</b>\n"
-        f"⏳ Осталось: {remaining.days} дн. {remaining.seconds // 3600} ч.\n"
-        f"🕐 Прошло: {passed.days} дн. {passed.seconds // 3600} ч.",
-        parse_mode="HTML"
+    count = get_referral_count(user_id)
+    has_prem = has_premium(user_id)
+    
+    if has_prem and prem_info:
+        remaining, passed = prem_info
+        text = (
+            "💎 <b>Premium-подписка</b>\n\n"
+            f"✅ <b>Подписка активна!</b>\n"
+            f"⏳ Осталось: {remaining.days} дн. {remaining.seconds // 3600} ч.\n"
+            f"🕐 Прошло: {passed.days} дн. {passed.seconds // 3600} ч.\n\n"
+            "<b>Продлить Premium:</b>"
+        )
+    else:
+        text = (
+            "💎 <b>Premium-подписка</b>\n\n"
+            "С Premium вы можете искать собеседника по полу!\n\n"
+            "<b>Купить Premium:</b>"
+        )
+    
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=premium_menu_keyboard())
+    
+    # Показываем реферальный прогресс
+    ref_text = (
+        f"🆓 <b>Бесплатно:</b>\n"
+        f"Пригласите {REFERRALS_NEEDED} друзей через /ref и получите 7 дней Premium\n"
+        f"📊 Ваш прогресс: {count}/{REFERRALS_NEEDED}"
     )
+    await update.message.reply_text(ref_text, parse_mode="HTML")
 
 async def giveprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -475,7 +515,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Проверяем Premium (для уведомления об истечении)
         if not has_premium(user_id):
             get_premium_info(user_id, context)
 
@@ -652,6 +691,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
+    # Обработка покупки Premium
+    if data.startswith("buy_"):
+        key = data.replace("buy_", "")
+        if key in PREMIUM_PRICES:
+            price_data = PREMIUM_PRICES[key]
+            await context.bot.send_invoice(
+                chat_id=user_id,
+                title="Premium-подписка",
+                description=f"Доступ к поиску по полу на {price_data['title']}",
+                payload=f"premium_{key}",
+                provider_token="",  # Для Stars оплаты токен не нужен
+                currency="XTR",
+                prices=[LabeledPrice(f"Premium {price_data['title']}", price_data['stars'])],
+                start_parameter="premium"
+            )
+        return
+
     if data in ["gender_male", "gender_female"]:
         gender = "male" if data == "gender_male" else "female"
         set_gender(user_id, gender)
@@ -666,7 +722,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/next — переключить собеседника\n"
             "/stop — завершить диалог\n"
             "/ref — реферальная система\n"
-            "/prem — статус подписки\n"
+            "/prem — Premium-подписка\n"
             "/settings — изменить параметры\n\n"
             "После каждого диалога вы можете пожаловаться на собеседника",
             reply_markup=kb
@@ -722,6 +778,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target_id in waiting_users:
             del waiting_users[target_id]
         return
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение платежа (всегда подтверждаем)."""
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка успешного платежа."""
+    user_id = update.effective_user.id
+    payload = update.message.successful_payment.invoice_payload
+    
+    if payload.startswith("premium_"):
+        key = payload.replace("premium_", "")
+        if key in PREMIUM_PRICES:
+            days = PREMIUM_PRICES[key]["days"]
+            give_premium(user_id, days)
+            await update.message.reply_text(
+                f"✅ Оплата прошла! Premium активен на {PREMIUM_PRICES[key]['title']}.\n"
+                "Напишите /start для обновления клавиатуры."
+            )
 
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -813,7 +889,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=gender_keyboard()
         )
         return
-    # Проверяем Premium (для уведомления об истечении)
     if not has_premium(user_id):
         get_premium_info(user_id, context)
     partner_id = find_partner(user_id, None, gender)
@@ -919,7 +994,9 @@ def main():
     app.add_handler(CommandHandler("ban", ban_cmd))
     app.add_handler(CommandHandler("unban", unban_cmd))
     app.add_handler(CommandHandler("banlist", banlist_cmd))
-    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(report|ban_|gender_).*"))
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    app.add_handler(CallbackQueryHandler(callback_handler, pattern="^(buy_|report|ban_|gender_).*"))
     app.add_handler(MessageHandler(
         filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
         filters.Sticker.ALL | filters.Document.ALL | filters.VIDEO_NOTE |
