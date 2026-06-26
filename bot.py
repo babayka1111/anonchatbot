@@ -247,8 +247,10 @@ def give_premium(user_id: int, days: int = 7):
     if row and datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S") > now:
         current_until = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
         new_until = current_until + timedelta(days=days)
+        was_active = True
     else:
         new_until = now + timedelta(days=days)
+        was_active = False
     
     premium_until = new_until.strftime("%Y-%m-%d %H:%M:%S")
     c.execute("INSERT OR REPLACE INTO premium VALUES (?, ?, ?)", 
@@ -256,6 +258,7 @@ def give_premium(user_id: int, days: int = 7):
     conn.commit()
     conn.close()
     expired_notified.discard(user_id)
+    return was_active
 
 def take_premium(user_id: int):
     conn = sqlite3.connect("bot.db")
@@ -503,10 +506,13 @@ async def giveprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Неверный ID.")
         return
     days = int(context.args[1]) if len(context.args) > 1 else 7
-    give_premium(target, days)
+    was_active = give_premium(target, days)
     await update.message.reply_text(f"✅ Premium выдан пользователю <code>{target}</code> на {days} дн.", parse_mode="HTML")
     try:
-        await context.bot.send_message(target, f"🎉 Администратор выдал вам Premium на {days} дн.\nНапишите /start для обновления клавиатуры")
+        if was_active:
+            await context.bot.send_message(target, f"🎉 Администратор продлил ваш Premium на {days} дн.\nНапишите /start для обновления клавиатуры")
+        else:
+            await context.bot.send_message(target, f"🎉 Администратор выдал вам Premium на {days} дн.\nНапишите /start для обновления клавиатуры")
     except:
         pass
 
@@ -527,13 +533,11 @@ async def takeprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== ТЕСТОВЫЕ КОМАНДЫ (только для ADMIN_ID) =====
 
 async def testref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавляет 5 фейковых рефералов для теста."""
+    """Имитирует набор 5 рефералов."""
     if update.effective_user.id != ADMIN_ID:
         return
     user_id = update.effective_user.id
-    if not context.args:
-        user_id = update.effective_user.id
-    else:
+    if context.args:
         try:
             user_id = int(context.args[0])
         except:
@@ -550,10 +554,9 @@ async def testref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     check_premium(user_id, context)
-    await update.message.reply_text(f"✅ Добавлено {REFERRALS_NEEDED} фейковых рефералов для пользователя <code>{user_id}</code>.", parse_mode="HTML")
 
 async def testprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Симулирует покупку Premium (без реальной оплаты)."""
+    """Имитирует покупку Premium через Stars."""
     if update.effective_user.id != ADMIN_ID:
         return
     user_id = update.effective_user.id
@@ -567,15 +570,17 @@ async def testprem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Неверный ID или дни.")
             return
     
-    give_premium(user_id, days)
-    await update.message.reply_text(f"✅ Симилирована покупка Premium на {days} дн. для пользователя <code>{user_id}</code>.", parse_mode="HTML")
+    was_active = give_premium(user_id, days)
     try:
-        await context.bot.send_message(user_id, f"🎉 Premium активирован на {days} дн. (тестовый режим)\nНапишите /start для обновления клавиатуры")
+        if was_active:
+            await context.bot.send_message(user_id, f"✅ Оплата прошла! Premium продлён на {days} дн.\nНапишите /start для обновления клавиатуры.")
+        else:
+            await context.bot.send_message(user_id, f"✅ Оплата прошла! Premium активен на {days} дн.\nНапишите /start для обновления клавиатуры.")
     except:
         pass
 
 async def testexpire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Симулирует истечение Premium."""
+    """Имитирует истечение Premium."""
     if update.effective_user.id != ADMIN_ID:
         return
     user_id = update.effective_user.id
@@ -587,7 +592,6 @@ async def testexpire_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     
     take_premium(user_id)
-    await update.message.reply_text(f"✅ Premium удалён у пользователя <code>{user_id}</code>. Напишите /start для проверки уведомления.", parse_mode="HTML")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -883,11 +887,17 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         key = payload.replace("premium_", "")
         if key in PREMIUM_PRICES:
             days = PREMIUM_PRICES[key]["days"]
-            give_premium(user_id, days)
-            await update.message.reply_text(
-                f"✅ Оплата прошла! Premium активен на {PREMIUM_PRICES[key]['title']}.\n"
-                "Напишите /start для обновления клавиатуры."
-            )
+            was_active = give_premium(user_id, days)
+            if was_active:
+                await update.message.reply_text(
+                    f"✅ Оплата прошла! Premium продлён на {days} дн.\n"
+                    "Напишите /start для обновления клавиатуры."
+                )
+            else:
+                await update.message.reply_text(
+                    f"✅ Оплата прошла! Premium активен на {PREMIUM_PRICES[key]['title']}.\n"
+                    "Напишите /start для обновления клавиатуры."
+                )
 
 async def ban_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
