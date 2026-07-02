@@ -790,6 +790,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Определяем ID сообщения для reply
     reply_to_message_id = None
     if update.message.reply_to_message:
+        # Ищем в мапе сообщение партнёра, соответствующее цитируемому сообщению
+        # Ключ: (отправитель_цитируемого, message_id_цитируемого)
+        # Мы ищем: message_map[(user_id, цитируемый_message_id)] -> message_id_у_партнёра
         reply_to_message_id = message_map.get((user_id, update.message.reply_to_message.message_id))
 
     # Отправляем сообщение партнёру
@@ -811,9 +814,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.text:
         sent_msg = await context.bot.send_message(partner_id, update.message.text, reply_to_message_id=reply_to_message_id)
 
-    # Сохраняем связь message_id для будущих reply
+    # Сохраняем связку: (отправитель, message_id_отправителя) -> message_id_получателя
+    # Это нужно чтобы когда отправитель ответит на своё же сообщение, мы знали какой message_id у партнёра
     if sent_msg:
-        message_map[(partner_id, sent_msg.message_id)] = update.message.message_id
+        message_map[(user_id, update.message.message_id)] = sent_msg.message_id
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -847,7 +851,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msgs = info["messages"]
             text = f"📋 <b>Полный диалог:</b>\n\n"
             full_text = text + "\n".join(msgs) if msgs else text + "Нет сообщений"
-            # Разбиваем на части если слишком длинное
             if len(full_text) > 4000:
                 for i in range(0, len(full_text), 4000):
                     await context.bot.send_message(ADMIN_ID, full_text[i:i+4000], parse_mode="HTML")
@@ -889,7 +892,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info = pending_reports[found]
             other_user = info["user2"] if user_id == info["user1"] else info["user1"]
             msgs = info["messages"]
-            # Показываем последние 20 строк
             msg_text = "\n".join(msgs[-20:]) if msgs else "Нет сообщений"
             await context.bot.send_message(
                 ADMIN_ID,
