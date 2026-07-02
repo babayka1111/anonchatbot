@@ -790,9 +790,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Определяем ID сообщения для reply
     reply_to_message_id = None
     if update.message.reply_to_message:
-        # Ищем в мапе сообщение партнёра, соответствующее цитируемому сообщению
-        # Ключ: (отправитель_цитируемого, message_id_цитируемого)
-        # Мы ищем: message_map[(user_id, цитируемый_message_id)] -> message_id_у_партнёра
+        # Пробуем найти message_id у партнёра
+        # Ключ: (тот_кто_ответил, message_id_на_который_отвечают)
         reply_to_message_id = message_map.get((user_id, update.message.reply_to_message.message_id))
 
     # Отправляем сообщение партнёру
@@ -814,9 +813,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.text:
         sent_msg = await context.bot.send_message(partner_id, update.message.text, reply_to_message_id=reply_to_message_id)
 
-    # Сохраняем связку: (отправитель, message_id_отправителя) -> message_id_получателя
-    # Это нужно чтобы когда отправитель ответит на своё же сообщение, мы знали какой message_id у партнёра
+    # Сохраняем связку в обе стороны
     if sent_msg:
+        # Чтобы партнёр мог ответить на ЭТО сообщение
+        message_map[(partner_id, sent_msg.message_id)] = update.message.message_id
+        # Чтобы отправитель мог ответить на СВОЁ сообщение (которое уже у партнёра)
         message_map[(user_id, update.message.message_id)] = sent_msg.message_id
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
